@@ -1,0 +1,141 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User management for relay access
+model User {
+  id          String   @id @default(cuid())
+  npub        String   @unique
+  pubkey      String   @unique
+  email       String?
+  passwordHash String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  isAdmin     Boolean  @default(false)
+  
+  // Relations
+  subscriptions Subscription[]
+  events        Event[]
+  uploads       Upload[]
+  
+  @@map("users")
+}
+
+// Subscription management for paid access
+model Subscription {
+  id           String           @id @default(cuid())
+  userId       String
+  type         SubscriptionType
+  status       SubscriptionStatus
+  priceInSats  Int
+  startsAt     DateTime
+  expiresAt    DateTime
+  paymentHash  String?
+  invoice      String?
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("subscriptions")
+}
+
+// Nostr events storage
+model Event {
+  id          String   @id @default(cuid())
+  eventId     String   @unique // Nostr event ID
+  pubkey      String   // Author's public key
+  kind        Int      // Event kind
+  content     String   // Event content
+  tags        Json     // Event tags as JSON
+  sig         String   // Event signature
+  createdAt   DateTime @default(now())
+  receivedAt  DateTime @default(now())
+  
+  // Relations
+  author User? @relation(fields: [pubkey], references: [pubkey])
+  
+  // Indexes for performance
+  @@index([kind])
+  @@index([pubkey])
+  @@index([createdAt])
+  @@index([eventId])
+  
+  @@map("events")
+}
+
+// File uploads for Blossom server
+model Upload {
+  id          String     @id @default(cuid())
+  userId      String
+  filename    String
+  originalName String
+  mimeType    String
+  size        Int
+  url         String
+  hash        String     @unique
+  status      UploadStatus @default(PROCESSING)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("uploads")
+}
+
+// Relay statistics and metrics
+model RelayStats {
+  id            String   @id @default(cuid())
+  date          DateTime @unique @default(now())
+  totalEvents   Int      @default(0)
+  totalUsers    Int      @default(0)
+  activeUsers   Int      @default(0)
+  totalUploads  Int      @default(0)
+  storageUsed   BigInt   @default(0)
+  revenue       Int      @default(0) // in sats
+  
+  @@map("relay_stats")
+}
+
+// Rate limiting tracking
+model RateLimit {
+  id        String   @id @default(cuid())
+  key       String   @unique // IP or pubkey
+  count     Int      @default(1)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  
+  @@map("rate_limits")
+}
+
+enum SubscriptionType {
+  RELAY_MONTHLY
+  RELAY_YEARLY
+  BLOSSOM_MONTHLY
+  BLOSSOM_YEARLY
+  COMBO_MONTHLY
+  COMBO_YEARLY
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum UploadStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}

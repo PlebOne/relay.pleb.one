@@ -1,0 +1,79 @@
+# Caddyfile for relay.pleb.one
+# Automatic HTTPS with Let's Encrypt
+
+{$RELAY_DOMAIN:relay.pleb.one} {
+    # Main application (Next.js)
+    handle /api/* {
+        reverse_proxy app:3000
+    }
+    
+    handle /* {
+        reverse_proxy app:3000
+    }
+    
+    # WebSocket for Nostr relay
+    handle /ws {
+        reverse_proxy app:3001
+    }
+    
+    # Health check endpoint
+    handle /health {
+        reverse_proxy app:3000
+    }
+    
+    # Security headers
+    header {
+        # HSTS
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        
+        # Content Security Policy
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none';"
+        
+        # Other security headers
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        
+        # Remove server info
+        -Server
+    }
+    
+    # Enable compression
+    encode gzip zstd
+    
+    # Logging
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+    
+    # Rate limiting for API endpoints
+    rate_limit {
+        zone api {
+            key {remote_host}
+            events 100
+            window 1m
+        }
+        
+        zone websocket {
+            key {remote_host}
+            events 10
+            window 1m
+        }
+    }
+}
+
+# Development configuration (if not using custom domain)
+localhost:80 {
+    reverse_proxy app:3000
+    
+    handle /ws {
+        reverse_proxy app:3001
+    }
+}
+
+# Redirect www to non-www
+www.{$RELAY_DOMAIN:relay.pleb.one} {
+    redir https://{$RELAY_DOMAIN:relay.pleb.one}{uri} permanent
+}

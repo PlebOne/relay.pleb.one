@@ -1,0 +1,154 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: relay-postgres
+    environment:
+      POSTGRES_DB: relay_pleb_one
+      POSTGRES_USER: relay_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-relay_password_change_me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relay_user -d relay_pleb_one"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: relay-redis
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: relay-app
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://relay_user:${DB_PASSWORD:-relay_password_change_me}@postgres:5432/relay_pleb_one
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - ADMIN_NPUB=${ADMIN_NPUB:-npub13hyx3qsqk3r7ctjqrr49uskut4yqjsxt8uvu4rekr55p08wyhf0qq90nt7}
+      - RELAY_PORT=3001
+      - LIGHTNING_NODE_URL=${LIGHTNING_NODE_URL}
+      - LIGHTNING_MACAROON=${LIGHTNING_MACAROON}
+      - CONTABO_ACCESS_KEY=${CONTABO_ACCESS_KEY}
+      - CONTABO_SECRET_KEY=${CONTABO_SECRET_KEY}
+    ports:
+      - "3000:3000"
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Caddy Reverse Proxy
+  caddy:
+    image: caddy:2-alpine
+    container_name: relay-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+    environment:
+      - RELAY_DOMAIN=${RELAY_DOMAIN:-relay.pleb.one}
+
+  # Optional: LND Lightning Node (remove if using external node)
+  lnd:
+    image: lightninglabs/lnd:v0.17.4-beta
+    container_name: relay-lnd
+    command: >
+      lnd
+      --bitcoin.active
+      --bitcoin.testnet
+      --debuglevel=info
+      --bitcoin.node=bitcoind
+      --bitcoind.rpchost=bitcoind:8332
+      --bitcoind.rpcuser=bitcoin
+      --bitcoind.rpcpass=bitcoin
+      --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
+      --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
+      --rpclisten=0.0.0.0:10009
+      --listen=0.0.0.0:9735
+      --restlisten=0.0.0.0:8080
+      --tlsextraip=0.0.0.0
+    ports:
+      - "9735:9735"  # P2P
+      - "10009:10009"  # gRPC
+      - "8080:8080"    # REST
+    volumes:
+      - lnd_data:/home/lnd/.lnd
+    depends_on:
+      - bitcoind
+    restart: unless-stopped
+    profiles:
+      - lightning
+
+  # Optional: Bitcoin Core (remove if using external node)
+  bitcoind:
+    image: bitcoin/bitcoin:26.0
+    container_name: relay-bitcoind
+    command: >
+      bitcoind
+      -testnet=1
+      -rpcallowip=0.0.0.0/0
+      -rpcbind=0.0.0.0:8332
+      -rpcuser=bitcoin
+      -rpcpassword=bitcoin
+      -zmqpubrawblock=tcp://0.0.0.0:28332
+      -zmqpubrawtx=tcp://0.0.0.0:28333
+      -txindex=1
+    ports:
+      - "8332:8332"  # RPC
+      - "18333:18333"  # P2P testnet
+    volumes:
+      - bitcoin_data:/home/bitcoin/.bitcoin
+    restart: unless-stopped
+    profiles:
+      - lightning
+
+volumes:
+  postgres_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  lnd_data:
+    driver: local
+  bitcoin_data:
+    driver: local
+
+networks:
+  default:
+    name: relay-network
