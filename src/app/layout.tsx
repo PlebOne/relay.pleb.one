@@ -2,6 +2,7 @@ import "@/styles/globals.css";
 
 import { GeistSans } from "geist/font/sans";
 import { type Metadata } from "next";
+import { TRPCReactProvider } from "@/trpc/providers";
 
 export const metadata: Metadata = {
   title: "relay.pleb.one - Premium Nostr Relay",
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${GeistSans.variable}`}>
       <body className="bg-black text-green-400 font-mono">
-        {children}
+        <TRPCReactProvider>{children}</TRPCReactProvider>
       </body>
     </html>
   );

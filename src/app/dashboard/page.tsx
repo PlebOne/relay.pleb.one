@@ -4,6 +4,8 @@ import { getServerSession } from "next-auth";
 
 import { MatrixRain, GlowingButton, StatusIndicator } from "@/components/ui/cypherpunk";
 import { ChatHistoryFeed, type ChatHistoryEntry } from "@/components/dashboard/chat-history-feed";
+import { WhitelistInvitePanel } from "@/components/dashboard/whitelist-invite-panel";
+import { AdminWhitelistPanel } from "@/components/dashboard/admin-whitelist-panel";
 import { authOptions } from "@/server/auth";
 import { db } from "@/server/db";
 
@@ -107,8 +109,12 @@ export default async function DashboardPage() {
                   Request export
                 </GlowingButton>
               </div>
+
+              <WhitelistInvitePanel />
             </aside>
           </section>
+
+          {session.user.isAdmin ? <AdminWhitelistPanel /> : null}
         </div>
       </div>
     </main>

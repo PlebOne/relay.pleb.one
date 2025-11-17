@@ -17,14 +17,21 @@ model User {
   pubkey      String   @unique
   email       String?
   passwordHash String?
+  displayName String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   isAdmin     Boolean  @default(false)
+  whitelistStatus WhitelistStatus @default(PENDING)
+  whitelistNotes  String?
+  inviteQuota     Int      @default(5)
+  invitesUsed     Int      @default(0)
   
   // Relations
   subscriptions Subscription[]
   events        Event[]
   uploads       Upload[]
+  invitesMade   WhitelistInvite[] @relation("InvitesMade")
+  invitesApproved WhitelistInvite[] @relation("InvitesApproved")
   
   @@map("users")
 }
@@ -93,6 +100,25 @@ model Upload {
   @@map("uploads")
 }
 
+model WhitelistInvite {
+  id            String                @id @default(cuid())
+  inviterId     String
+  inviteeNpub   String
+  inviteePubkey String
+  inviteeName   String?
+  notes         String?
+  status        WhitelistInviteStatus @default(APPROVED)
+  approvedById  String?
+  createdAt     DateTime              @default(now())
+  approvedAt    DateTime?
+
+  inviter    User @relation("InvitesMade", fields: [inviterId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("InvitesApproved", fields: [approvedById], references: [id])
+
+  @@map("whitelist_invites")
+  @@index([inviteePubkey])
+}
+
 // Relay statistics and metrics
 model RelayStats {
   id            String   @id @default(cuid())
@@ -138,4 +164,17 @@ enum UploadStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum WhitelistStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  REVOKED
+}
+
+enum WhitelistInviteStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }

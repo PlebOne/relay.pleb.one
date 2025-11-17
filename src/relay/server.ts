@@ -313,35 +313,28 @@ export class NostrRelayServer {
    * Check if connection is authorized to post events
    */
   private async isAuthorizedToPost(connection: Connection): Promise<boolean> {
-    // Admin is always authorized
-    if (connection.pubkey && this.isAdmin(connection.pubkey)) {
-      return true;
-    }
-    
-    // Check if user has active subscription
+    // Admin is always authorized via database flag
     if (connection.pubkey) {
       const user = await db.user.findUnique({
         where: { pubkey: connection.pubkey },
-        include: {
-          subscriptions: {
-            where: {
-              status: "ACTIVE",
-              expiresAt: { gt: new Date() },
-            },
-          },
+        select: {
+          isAdmin: true,
+          whitelistStatus: true,
         },
       });
       
-      return (user?.subscriptions?.length ?? 0) > 0;
+      if (!user) {
+        return false;
+      }
+
+      if (user.isAdmin) {
+        return true;
+      }
+
+      return user.whitelistStatus === "ACTIVE";
     }
     
     return false;
-  }
-
-  private isAdmin(pubkey: string): boolean {
-    // Convert npub to hex for comparison if needed
-    const adminNpub = env.ADMIN_NPUB;
-    return pubkey === adminNpub;
   }
 
   // Additional methods for REQ, CLOSE, AUTH, etc. would go here...

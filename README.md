@@ -1,6 +1,6 @@
 # relay.pleb.one
 
-A premium Nostr relay and Blossom host built with the T3 stack (Next.js 15, tRPC, Prisma, Tailwind). It combines a cypherpunk-styled marketing site, subscription management, Lightning payments, a modular relay server, and S3-backed Blossom storage.
+A public Nostr relay with whitelist-based access and Blossom host built with the T3 stack (Next.js 15, tRPC, Prisma, Tailwind). It combines a cypherpunk-styled marketing site, whitelist management, invite propagation, a modular relay server, and S3-backed Blossom storage.
 
 ---
 
@@ -21,9 +21,11 @@ A premium Nostr relay and Blossom host built with the T3 stack (Next.js 15, tRP
 
 ## Highlights
 
-- Premium Nostr relay with modular NIP handlers and a custom WebSocket server
+- Public Nostr relay with whitelist-based access control and invite propagation
+- Admin dashboard for managing whitelist entries, notes, and invite quotas
+- User invite system: whitelisted members can invite up to 5 friends (configurable)
 - Integrated Blossom image storage (EXIF removal, S3 backends, upload quotas)
-- Lightning-enabled subscriptions with pluggable providers (LND, LNURL, mock)
+- Lightning-ready payment scaffolding (LND, LNURL, mock providers for future use)
 - NextAuth-powered login (NIP-07 + password fallback) and dashboard analytics
 - Tailwind-driven, terminal-inspired UI tuned for cypherpunk aesthetics
 - Docker-first deployment with optional Caddy reverse proxy
@@ -125,9 +127,17 @@ Adding a NIP involves subclassing `BaseNIP`, implementing validation and filter 
 
 ## Payments and Blossom
 
-- `lib/payments/providers.ts` exposes an abstract provider plus implementations for LND, LNURL, and a mock dev provider. `PaymentManager` selects the best available provider based on environment variables.
+- Whitelist access is currently free but the payment infrastructure (`lib/payments/providers.ts`) is ready for future monetization if needed. It includes implementations for LND, LNURL, and a mock dev provider.
 - `lib/blossom/server.ts` handles uploads, metadata sanitization, EXIF stripping, and integration with S3-compatible storage.
-- Subscription SKUs (relay, blossom, combo) are defined in the pricing UI and mirrored in payment logic.
+- Whitelist invites are tracked in the database with status, notes, and invite quotas that admins can adjust per user.
+
+### Whitelist workflow
+
+1. **Admin adds initial users** via the admin panel (npub + optional name/notes/quota)
+2. **Whitelisted users receive invite quota** (default: 5 invites)
+3. **Users can share invites** from their dashboard by entering friend's npub
+4. **Admin can pause/revoke** access or adjust quotas at any time
+5. **Relay enforces whitelist** – only ACTIVE users can publish events
 
 ## Deployment
 

@@ -26,6 +26,9 @@ declare module "next-auth" {
       npub?: string;
       pubkey?: string;
       isAdmin: boolean;
+      whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
+      inviteQuota: number;
+      invitesUsed: number;
       // ...other properties
     } & DefaultSession["user"];
   }
@@ -34,6 +37,9 @@ declare module "next-auth" {
     npub?: string;
     pubkey?: string;
     isAdmin: boolean;
+    whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
+    inviteQuota: number;
+    invitesUsed: number;
     // ...other properties
   }
 }
@@ -53,6 +59,9 @@ export const authOptions: NextAuthOptions = {
         npub: user.npub,
         pubkey: user.pubkey,
         isAdmin: user.isAdmin || user.npub === env.ADMIN_NPUB,
+        whitelistStatus: user.whitelistStatus,
+        inviteQuota: user.inviteQuota,
+        invitesUsed: user.invitesUsed,
       },
     }),
   },
@@ -97,11 +106,14 @@ export const authOptions: NextAuthOptions = {
 
           if (!user) {
             const npub = nip19.npubEncode(credentials.pubkey);
+            const isAdmin = npub === env.ADMIN_NPUB;
             user = await db.user.create({
               data: {
                 pubkey: credentials.pubkey,
                 npub,
-                isAdmin: npub === env.ADMIN_NPUB,
+                isAdmin,
+                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
+                inviteQuota: isAdmin ? 999 : 5,
               },
             });
           }
@@ -111,6 +123,9 @@ export const authOptions: NextAuthOptions = {
             pubkey: user.pubkey,
             npub: user.npub,
             isAdmin: user.isAdmin,
+            whitelistStatus: user.whitelistStatus,
+            inviteQuota: user.inviteQuota,
+            invitesUsed: user.invitesUsed,
           };
         } catch (error) {
           console.error("NIP-07 auth error:", error);
@@ -150,6 +165,9 @@ export const authOptions: NextAuthOptions = {
           pubkey: user.pubkey,
           npub: user.npub,
           isAdmin: user.isAdmin,
+          whitelistStatus: user.whitelistStatus,
+          inviteQuota: user.inviteQuota,
+          invitesUsed: user.invitesUsed,
         };
       },
     }),

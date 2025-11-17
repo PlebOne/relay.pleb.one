@@ -141,34 +141,33 @@ export const adminProcedure = protectedProcedure.use(({ ctx, next }) => {
 });
 
 /**
- * Paid user procedure
+ * Whitelisted user procedure
  *
- * This procedure checks if the user has an active subscription.
+ * Ensures the requester is an admin or has an active whitelist slot.
  */
-export const paidProcedure = protectedProcedure.use(async ({ ctx, next }) => {
+export const whitelistedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const user = await ctx.db.user.findUnique({
     where: { id: ctx.session.user.id },
-    include: {
-      subscriptions: {
-        where: {
-          status: "ACTIVE",
-          expiresAt: { gt: new Date() },
-        },
-      },
+    select: {
+      id: true,
+      isAdmin: true,
+      whitelistStatus: true,
     },
   });
 
-  const isAdmin = user?.isAdmin || 
-    user?.npub === "npub13hyx3qsqk3r7ctjqrr49uskut4yqjsxt8uvu4rekr55p08wyhf0qq90nt7";
-  
-  const hasActiveSubscription = (user?.subscriptions?.length ?? 0) > 0;
-  
-  if (!isAdmin && !hasActiveSubscription) {
-    throw new TRPCError({ 
-      code: "FORBIDDEN", 
-      message: "Active subscription required" 
+  if (!user) {
+    throw new TRPCError({ code: "UNAUTHORIZED" });
+  }
+
+  if (!user.isAdmin && user.whitelistStatus !== "ACTIVE") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Whitelist access required",
     });
   }
-  
+
   return next({ ctx });
 });
+
+// Legacy alias while other modules migrate
+export const paidProcedure = whitelistedProcedure;
