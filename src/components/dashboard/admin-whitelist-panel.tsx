@@ -8,6 +8,7 @@ import { GlowingButton } from "@/components/ui/cypherpunk";
 const STATUS_OPTIONS = ["ACTIVE", "PAUSED", "PENDING", "REVOKED"] as const;
 type WhitelistStatus = (typeof STATUS_OPTIONS)[number];
 type ListedUser = RouterOutputs["admin"]["listWhitelist"][number];
+type PendingApproval = RouterOutputs["admin"]["listPendingApprovals"][number];
 
 type FiltersState = {
   query: string;
@@ -39,15 +40,28 @@ export function AdminWhitelistPanel() {
   }), [filters]);
 
   const listQuery = api.admin.listWhitelist.useQuery(listInput);
+  const pendingQuery = api.admin.listPendingApprovals.useQuery();
   const updateStatus = api.admin.updateWhitelistStatus.useMutation({
     onSuccess: async () => {
       await listQuery.refetch();
+      await pendingQuery.refetch();
     },
   });
   const upsertEntry = api.admin.upsertWhitelistEntry.useMutation({
     onSuccess: async () => {
       await listQuery.refetch();
       setNewEntry({ npub: "", displayName: "", inviteQuota: 5, note: "" });
+    },
+  });
+  const approvePrivileges = api.admin.approveInvitePrivileges.useMutation({
+    onSuccess: async () => {
+      await pendingQuery.refetch();
+      await listQuery.refetch();
+    },
+  });
+  const refreshInvites = api.admin.refreshMonthlyInvites.useMutation({
+    onSuccess: async () => {
+      await listQuery.refetch();
     },
   });
 
@@ -87,10 +101,57 @@ export function AdminWhitelistPanel() {
           <p className="text-xs uppercase tracking-[0.25em] text-green-500/70">Admin controls</p>
           <h2 className="text-2xl font-semibold text-green-100">Whitelist directory</h2>
         </div>
-        <span className="text-sm text-gray-400">
-          {listQuery.isLoading ? "Syncing…" : `${listQuery.data?.length ?? 0} results`}
-        </span>
+        <div className="flex items-center gap-4">
+          {pendingQuery.data && pendingQuery.data.length > 0 ? (
+            <span className="rounded-full bg-yellow-500/20 px-3 py-1 text-sm text-yellow-300">
+              {pendingQuery.data.length} pending approval{pendingQuery.data.length !== 1 ? "s" : ""}
+            </span>
+          ) : null}
+          <span className="text-sm text-gray-400">
+            {listQuery.isLoading ? "Syncing…" : `${listQuery.data?.length ?? 0} results`}
+          </span>
+        </div>
       </header>
+
+      {pendingQuery.data && pendingQuery.data.length > 0 ? (
+        <div className="mt-6 rounded-xl border border-yellow-500/40 bg-yellow-900/10 p-4">
+          <h3 className="text-sm font-semibold text-yellow-400">⚠️ Pending invite privilege approvals</h3>
+          <p className="mt-1 text-xs text-gray-300">
+            These users had someone they invited get blacklisted. Review and approve to restore their invite
+            privileges.
+          </p>
+          <div className="mt-4 space-y-3">
+            {pendingQuery.data.map((user: PendingApproval) => (
+              <div
+                key={user.id}
+                className="rounded-lg border border-yellow-500/30 bg-black/60 p-3 text-sm"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-semibold text-white">{user.displayName ?? user.npub}</p>
+                    <p className="text-xs text-gray-400">{user.inviteSuspensionReason}</p>
+                  </div>
+                  <GlowingButton
+                    className="px-4 py-2 text-xs"
+                    disabled={approvePrivileges.isPending}
+                    onClick={() => approvePrivileges.mutate({ userId: user.id })}
+                  >
+                    Restore privileges
+                  </GlowingButton>
+                </div>
+                {user.usersInvited.length > 0 ? (
+                  <div className="mt-2 text-xs text-gray-400">
+                    Invited:{" "}
+                    {user.usersInvited
+                      .map((u: { displayName?: string | null; npub: string }) => u.displayName ?? u.npub)
+                      .join(", ")}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-6 grid gap-4 md:grid-cols-[2fr,3fr]">
         <div className="rounded-xl border border-green-500/20 bg-black/50 p-4">
@@ -123,6 +184,13 @@ export function AdminWhitelistPanel() {
             onClick={() => setFilters({ query: "", statuses: new Set() })}
           >
             Clear filters
+          </GlowingButton>
+          <GlowingButton
+            className="mt-2 w-full"
+            disabled={refreshInvites.isPending}
+            onClick={() => refreshInvites.mutate()}
+          >
+            {refreshInvites.isPending ? "Refreshing..." : "Refresh monthly invites"}
           </GlowingButton>
         </div>
 

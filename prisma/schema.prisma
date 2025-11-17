@@ -25,13 +25,21 @@ model User {
   whitelistNotes  String?
   inviteQuota     Int      @default(5)
   invitesUsed     Int      @default(0)
+  invitePrivilegesSuspended Boolean @default(false)
+  inviteSuspensionReason String?
+  requiresAdminApproval Boolean @default(false)
+  lastInviteRefresh DateTime @default(now())
+  invitedById     String?
   
   // Relations
   subscriptions Subscription[]
   events        Event[]
   uploads       Upload[]
   invitesMade   WhitelistInvite[] @relation("InvitesMade")
+  invitesReceived WhitelistInvite[] @relation("InviteReceived")
   invitesApproved WhitelistInvite[] @relation("InvitesApproved")
+  invitedBy     User? @relation("InvitedByRelation", fields: [invitedById], references: [id])
+  usersInvited  User[] @relation("InvitedByRelation")
   
   @@map("users")
 }
@@ -103,6 +111,7 @@ model Upload {
 model WhitelistInvite {
   id            String                @id @default(cuid())
   inviterId     String
+  inviteeId     String?
   inviteeNpub   String
   inviteePubkey String
   inviteeName   String?
@@ -113,10 +122,12 @@ model WhitelistInvite {
   approvedAt    DateTime?
 
   inviter    User @relation("InvitesMade", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee    User? @relation("InviteReceived", fields: [inviteeId], references: [id])
   approvedBy User? @relation("InvitesApproved", fields: [approvedById], references: [id])
 
   @@map("whitelist_invites")
   @@index([inviteePubkey])
+  @@index([inviteeId])
 }
 
 // Relay statistics and metrics

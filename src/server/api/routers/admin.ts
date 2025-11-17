@@ -133,7 +133,30 @@ export const adminRouter = createTRPCRouter({
           ...(typeof input.note !== "undefined" ? { whitelistNotes: input.note } : {}),
           ...(typeof input.inviteQuota !== "undefined" ? { inviteQuota: input.inviteQuota } : {}),
         },
+        include: {
+          invitedBy: {
+            select: {
+              id: true,
+              isAdmin: true,
+              invitePrivilegesSuspended: true,
+            },
+          },
+        },
       });
+
+      // Blacklist propagation: if user is revoked and was invited by someone, suspend inviter's privileges
+      if (input.status === "REVOKED" && user.invitedById && user.invitedBy) {
+        if (!user.invitedBy.isAdmin && !user.invitedBy.invitePrivilegesSuspended) {
+          await ctx.db.user.update({
+            where: { id: user.invitedById },
+            data: {
+              invitePrivilegesSuspended: true,
+              inviteSuspensionReason: `Invited user ${user.displayName ?? user.npub} was blacklisted`,
+              requiresAdminApproval: true,
+            },
+          });
+        }
+      }
 
       return user;
     }),
@@ -146,8 +169,93 @@ export const adminRouter = createTRPCRouter({
         data: {
           whitelistStatus: "REVOKED",
         },
+        include: {
+          invitedBy: {
+            select: {
+              id: true,
+              isAdmin: true,
+              invitePrivilegesSuspended: true,
+            },
+          },
+        },
       });
+
+      // Blacklist propagation when revoking
+      if (user.invitedById && user.invitedBy) {
+        if (!user.invitedBy.isAdmin && !user.invitedBy.invitePrivilegesSuspended) {
+          await ctx.db.user.update({
+            where: { id: user.invitedById },
+            data: {
+              invitePrivilegesSuspended: true,
+              inviteSuspensionReason: `Invited user ${user.displayName ?? user.npub} was blacklisted`,
+              requiresAdminApproval: true,
+            },
+          });
+        }
+      }
 
       return user;
     }),
+
+  listPendingApprovals: adminProcedure.query(async ({ ctx }) => {
+    const users = await ctx.db.user.findMany({
+      where: {
+        requiresAdminApproval: true,
+        invitePrivilegesSuspended: true,
+      },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        npub: true,
+        displayName: true,
+        inviteSuspensionReason: true,
+        updatedAt: true,
+        usersInvited: {
+          select: {
+            id: true,
+            npub: true,
+            displayName: true,
+            whitelistStatus: true,
+          },
+        },
+      },
+    });
+
+    return users;
+  }),
+
+  approveInvitePrivileges: adminProcedure
+    .input(z.object({ userId: z.string().cuid() }))
+    .mutation(async ({ ctx, input }) => {
+      return ctx.db.user.update({
+        where: { id: input.userId },
+        data: {
+          invitePrivilegesSuspended: false,
+          inviteSuspensionReason: null,
+          requiresAdminApproval: false,
+        },
+      });
+    }),
+
+  refreshMonthlyInvites: adminProcedure.mutation(async ({ ctx }) => {
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+
+    const result = await ctx.db.user.updateMany({
+      where: {
+        lastInviteRefresh: {
+          lt: oneMonthAgo,
+        },
+        invitePrivilegesSuspended: false,
+        whitelistStatus: "ACTIVE",
+        isAdmin: false,
+      },
+      data: {
+        invitesUsed: 0,
+        lastInviteRefresh: new Date(),
+      },
+    });
+
+    return { refreshedCount: result.count };
+  }),
 });

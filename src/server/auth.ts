@@ -29,6 +29,7 @@ declare module "next-auth" {
       whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
       inviteQuota: number;
       invitesUsed: number;
+      invitePrivilegesSuspended: boolean;
       // ...other properties
     } & DefaultSession["user"];
   }
@@ -40,6 +41,7 @@ declare module "next-auth" {
     whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
     inviteQuota: number;
     invitesUsed: number;
+    invitePrivilegesSuspended: boolean;
     // ...other properties
   }
 }
@@ -62,6 +64,7 @@ export const authOptions: NextAuthOptions = {
         whitelistStatus: user.whitelistStatus,
         inviteQuota: user.inviteQuota,
         invitesUsed: user.invitesUsed,
+        invitePrivilegesSuspended: user.invitePrivilegesSuspended,
       },
     }),
   },
@@ -126,6 +129,7 @@ export const authOptions: NextAuthOptions = {
             whitelistStatus: user.whitelistStatus,
             inviteQuota: user.inviteQuota,
             invitesUsed: user.invitesUsed,
+            invitePrivilegesSuspended: user.invitePrivilegesSuspended,
           };
         } catch (error) {
           console.error("NIP-07 auth error:", error);
@@ -168,6 +172,7 @@ export const authOptions: NextAuthOptions = {
           whitelistStatus: user.whitelistStatus,
           inviteQuota: user.inviteQuota,
           invitesUsed: user.invitesUsed,
+          invitePrivilegesSuspended: user.invitePrivilegesSuspended,
         };
       },
     }),

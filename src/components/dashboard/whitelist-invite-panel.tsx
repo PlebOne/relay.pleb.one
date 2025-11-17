@@ -66,7 +66,17 @@ export function WhitelistInvitePanel() {
             <p className="mt-3 text-xs text-gray-400">Note from admin: {statusSummary.notes}</p>
           ) : null}
 
-          {statusSummary.status === "ACTIVE" ? (
+          {statusSummary.invitePrivilegesSuspended ? (
+            <div className="mt-4 rounded-lg border border-yellow-500/40 bg-yellow-900/10 p-3">
+              <p className="text-sm font-semibold text-yellow-300">⚠️ Invite privileges suspended</p>
+              <p className="mt-1 text-xs text-gray-300">
+                {statusSummary.inviteSuspensionReason ??
+                  "Someone you invited was removed from the whitelist. An admin will review your case."}
+              </p>
+            </div>
+          ) : null}
+
+          {statusSummary.status === "ACTIVE" && !statusSummary.invitePrivilegesSuspended ? (
             <form
               className="mt-5 space-y-3"
               onSubmit={(event) => {

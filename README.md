@@ -134,10 +134,13 @@ Adding a NIP involves subclassing `BaseNIP`, implementing validation and filter 
 ### Whitelist workflow
 
 1. **Admin adds initial users** via the admin panel (npub + optional name/notes/quota)
-2. **Whitelisted users receive invite quota** (default: 5 invites)
+2. **Whitelisted users receive invite quota** (default: 5 invites, refreshes monthly)
 3. **Users can share invites** from their dashboard by entering friend's npub
-4. **Admin can pause/revoke** access or adjust quotas at any time
-5. **Relay enforces whitelist** – only ACTIVE users can publish events
+4. **Invite tracking** – system links invited users to their inviter
+5. **Blacklist propagation** – if an invited user is revoked, inviter's privileges are suspended
+6. **Admin approval** – suspended users appear in approval queue for admin review
+7. **Monthly refresh** – admins can reset all users' invite quotas (max 5) monthly
+8. **Relay enforces whitelist** – only ACTIVE users (not suspended) can publish events
 
 ## Deployment
 

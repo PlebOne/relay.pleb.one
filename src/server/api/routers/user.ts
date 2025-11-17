@@ -118,6 +118,8 @@ export const userRouter = createTRPCRouter({
         whitelistNotes: true,
         inviteQuota: true,
         invitesUsed: true,
+        invitePrivilegesSuspended: true,
+        inviteSuspensionReason: true,
       },
     });
 
@@ -131,6 +133,8 @@ export const userRouter = createTRPCRouter({
       inviteQuota: user.inviteQuota,
       invitesUsed: user.invitesUsed,
       invitesAvailable: Math.max(0, user.inviteQuota - user.invitesUsed),
+      invitePrivilegesSuspended: user.invitePrivilegesSuspended,
+      inviteSuspensionReason: user.inviteSuspensionReason,
     };
   }),
 
@@ -152,6 +156,8 @@ export const userRouter = createTRPCRouter({
           invitesUsed: true,
           whitelistStatus: true,
           isAdmin: true,
+          invitePrivilegesSuspended: true,
+          inviteSuspensionReason: true,
         },
       });
 
@@ -161,6 +167,13 @@ export const userRouter = createTRPCRouter({
 
       if (inviter.whitelistStatus !== "ACTIVE" && !inviter.isAdmin) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Whitelist access required" });
+      }
+
+      if (inviter.invitePrivilegesSuspended && !inviter.isAdmin) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: inviter.inviteSuspensionReason || "Invite privileges suspended",
+        });
       }
 
       const invitesAvailable = inviter.isAdmin
@@ -209,6 +222,7 @@ export const userRouter = createTRPCRouter({
             npub: existingUser.npub ?? targetNpub,
             displayName: input.displayName ?? existingUser.displayName,
             whitelistStatus: "ACTIVE",
+            invitedById: inviter.id,
           },
         });
         inviteeId = updated.id;
@@ -220,6 +234,7 @@ export const userRouter = createTRPCRouter({
             displayName: input.displayName,
             whitelistStatus: "ACTIVE",
             inviteQuota: 5,
+            invitedById: inviter.id,
           },
         });
         inviteeId = created.id;
@@ -228,6 +243,7 @@ export const userRouter = createTRPCRouter({
       await ctx.db.whitelistInvite.create({
         data: {
           inviterId: inviter.id,
+          inviteeId,
           inviteeNpub: targetNpub,
           inviteePubkey: pubkey,
           inviteeName: input.displayName,
