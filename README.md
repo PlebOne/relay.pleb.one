@@ -100,6 +100,7 @@ Configuration is entirely `.env`-driven. Key groups (see `.env.example` for the 
 
 - **Database**: `DATABASE_URL`, `DIRECT_URL`
 - **Auth**: `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `ADMIN_NPUB`
+- **Cron**: `CRON_SECRET` (for automated monthly invite refresh)
 - **Payments**: `LIGHTNING_NODE_URL`, `LIGHTNING_MACAROON`, `LNURL_ENDPOINT`
 - **Blossom**: `BLOSSOM_BUCKET`, `BLOSSOM_REGION`, `AWS_ACCESS_KEY_ID`, etc.
 - **Relay**: `RELAY_PORT`, `MAX_EVENT_SIZE`, rate limits
@@ -158,6 +159,23 @@ The included compose file starts the Next.js app, relay server, Prisma migration
 2. Run `npm start` for the frontend/API
 3. Launch the relay server via `node dist/relay/server.js` or `npm run relay:dev` with `NODE_ENV=production`
 4. Point Caddy (or nginx) at port 3000 + the relay WebSocket port. Caddyfile contains sane defaults.
+
+### VPS & Cron Setup
+
+For automated monthly invite refreshes on a VPS (non-Vercel environment):
+
+1. Ensure `CRON_SECRET` is set in your `.env` file.
+2. Use the provided script to trigger the refresh via cron:
+
+```bash
+# Edit crontab
+crontab -e
+
+# Add the following line to run at midnight on the 1st of every month
+0 0 1 * * /path/to/relay.pleb.one/scripts/cron-monthly-refresh.sh >> /var/log/relay-cron.log 2>&1
+```
+
+Make sure the script is executable (`chmod +x scripts/cron-monthly-refresh.sh`).
 
 **Typed routes note:** Next.js 15.5 warns that `experimental.typedRoutes` moved to `typedRoutes`. Update `next.config.js` when upgrading to keep typed links enabled.
 
