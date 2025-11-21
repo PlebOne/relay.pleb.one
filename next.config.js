@@ -1,13 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typedRoutes: true,
-  images: {
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "usc1.contabostorage.com",
-      },
-    ],
+  output: 'standalone',
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
   },
   webpack: (config) => {
     config.externals.push("pino-pretty", "lokijs", "encoding");

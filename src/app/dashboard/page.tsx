@@ -3,9 +3,8 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 
 import { MatrixRain, GlowingButton, StatusIndicator } from "@/components/ui/cypherpunk";
-import { ChatHistoryFeed, type ChatHistoryEntry } from "@/components/dashboard/chat-history-feed";
-import { WhitelistInvitePanel } from "@/components/dashboard/whitelist-invite-panel";
-import { AdminWhitelistPanel } from "@/components/dashboard/admin-whitelist-panel";
+import { type ChatHistoryEntry } from "@/components/dashboard/chat-history-feed";
+import { DashboardTabs } from "@/components/dashboard/dashboard-tabs";
 import { authOptions } from "@/server/auth";
 import { db } from "@/server/db";
 
@@ -87,34 +86,7 @@ export default async function DashboardPage() {
             </dl>
           </header>
 
-          <section className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-            <ChatHistoryFeed entries={entries} viewerLabel={viewerLabel} />
-
-            <aside className="space-y-6">
-              <div className="rounded-2xl border border-green-500/30 bg-black/70 p-5 shadow-lg shadow-green-500/10">
-                <h2 className="text-lg font-semibold text-green-400">Feed notes</h2>
-                <ul className="mt-3 space-y-2 text-sm text-gray-300">
-                  <li>• Stream includes every event observed by the relay.</li>
-                  <li>• Entries are ordered newest-first and update on refresh.</li>
-                  <li>• Admins will soon unlock moderation actions from this panel.</li>
-                </ul>
-              </div>
-
-              <div className="rounded-2xl border border-green-500/30 bg-black/70 p-5 shadow-lg shadow-green-500/10">
-                <h2 className="text-lg font-semibold text-green-400">Need deeper history?</h2>
-                <p className="mt-2 text-sm text-gray-300">
-                  Export raw relay data through our Blossom storage or request a CSV snapshot. Automation hooks are coming next.
-                </p>
-                <GlowingButton className="mt-4 w-full" variant="secondary">
-                  Request export
-                </GlowingButton>
-              </div>
-
-              <WhitelistInvitePanel />
-            </aside>
-          </section>
-
-          {session.user.isAdmin ? <AdminWhitelistPanel /> : null}
+          <DashboardTabs session={session} entries={entries} />
         </div>
       </div>
     </main>

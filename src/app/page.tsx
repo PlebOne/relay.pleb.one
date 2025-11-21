@@ -1,39 +1,14 @@
 import Link from "next/link";
 
-import { MatrixRain, TerminalWindow, GlowingButton, StatusIndicator, BitcoinPrice } from "@/components/ui/cypherpunk";
+import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { SiteHeader } from "@/components/layout/site-header";
 
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
       <MatrixRain />
       {/* Header */}
-      <header className="border-b border-green-500/30 bg-black/80 backdrop-blur-sm relative z-10">
-        <div className="container mx-auto px-4 py-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <div className="text-2xl font-bold text-green-400 lightning-animation">
-                ⚡ relay.pleb.one
-              </div>
-              <StatusIndicator status="online" />
-              <div className="text-sm text-gray-400 font-mono">
-                Premium Nostr Relay
-              </div>
-            </div>
-            <nav className="flex items-center space-x-6">
-              <BitcoinPrice />
-              <a href="#features" className="text-green-400 hover:text-green-300 transition font-mono">
-                [Features]
-              </a>
-              <a href="#pricing" className="text-green-400 hover:text-green-300 transition font-mono">
-                [Pricing]
-              </a>
-              <GlowingButton>
-                {'>> Connect'}
-              </GlowingButton>
-            </nav>
-          </div>
-        </div>
-      </header>
+      <SiteHeader />
 
       {/* Hero Section */}
       <section className="py-20 relative z-10">
@@ -45,13 +20,10 @@ export default function HomePage() {
                   $ ./relay.pleb.one --start
                 </div>
                 <div className="text-gray-400 font-mono text-sm">
-                  [INFO] Starting premium Nostr relay...
+                  [INFO] Starting Nostr relay...
                 </div>
                 <div className="text-gray-400 font-mono text-sm">
                   [INFO] Lightning payments enabled ⚡
-                </div>
-                <div className="text-gray-400 font-mono text-sm">
-                  [INFO] Blossom server initialized 🌸
                 </div>
                 <div className="text-green-400 font-mono text-sm">
                   [SUCCESS] Relay online at wss://relay.pleb.one
@@ -60,20 +32,29 @@ export default function HomePage() {
               
               <div className="text-center">
                 <h1 className="text-4xl font-bold mb-6 bg-gradient-to-r from-green-400 to-cyan-400 bg-clip-text text-transparent font-mono">
-                  {'> Premium Nostr Relay <'}
+                  {'> Community Nostr Relay <'}
                 </h1>
                 <p className="text-lg text-gray-300 mb-8 max-w-2xl mx-auto font-mono">
-                  Lightning-fast, censorship-resistant communication with Blossom server integration.
+                  Lightning-fast, censorship-resistant communication backed by a hardened Rust relay core.
                   <br />
-                  <span className="text-green-400">Pay with Bitcoin Lightning</span> for premium relay access.
+                  <span className="text-green-400">Invite-only Web of Trust access</span> - Quality over quantity.
                 </p>
-                <div className="flex justify-center space-x-4">
-                  <GlowingButton className="text-lg px-8 py-3">
-                    Start Free Trial
-                  </GlowingButton>
-                  <GlowingButton variant="secondary" className="text-lg px-8 py-3">
-                    Learn More
-                  </GlowingButton>
+                <div className="flex flex-wrap justify-center gap-4">
+                  <Link href="/request">
+                    <GlowingButton className="text-lg px-8 py-3">
+                      Request Invite
+                    </GlowingButton>
+                  </Link>
+                  <Link href="/login">
+                    <GlowingButton variant="secondary" className="text-lg px-8 py-3">
+                      Member Login
+                    </GlowingButton>
+                  </Link>
+                  <a href="#access">
+                    <GlowingButton variant="secondary" className="text-lg px-8 py-3">
+                      Learn More
+                    </GlowingButton>
+                  </a>
                 </div>
               </div>
             </TerminalWindow>
@@ -109,18 +90,18 @@ export default function HomePage() {
             {/* Feature 3 */}
             <TerminalWindow title="lightning.js">
               <div className="text-2xl mb-4 text-center lightning-animation">⚡</div>
-              <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Lightning Payments</h3>
+              <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Web of Trust</h3>
               <p className="text-gray-300 font-mono text-sm">
-                Pay with Bitcoin Lightning Network for premium access. No KYC required.
+                Invite-only access system where trust propagates through personal connections.
               </p>
             </TerminalWindow>
             
             {/* Feature 4 */}
-            <TerminalWindow title="blossom.srv">
-              <div className="text-2xl mb-4 text-center">🌸</div>
-              <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Blossom Server</h3>
+            <TerminalWindow title="uptime.monitor">
+              <div className="text-2xl mb-4 text-center">🛰️</div>
+              <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Reliable Uptime</h3>
               <p className="text-gray-300 font-mono text-sm">
-                Integrated image hosting with automatic EXIF removal and secure storage.
+                Optimized for stability with automated health monitoring and resource management.
               </p>
             </TerminalWindow>
             
@@ -129,7 +110,7 @@ export default function HomePage() {
               <div className="text-2xl mb-4 text-center">📊</div>
               <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Admin Dashboard</h3>
               <p className="text-gray-300 font-mono text-sm">
-                Comprehensive dashboard for managing uploads, viewing stats, and downloading data.
+                Comprehensive dashboard for monitoring activity, managing invites, and exporting relay data.
               </p>
             </TerminalWindow>
             
@@ -138,94 +119,167 @@ export default function HomePage() {
               <div className="text-2xl mb-4 text-center">🛡️</div>
               <h3 className="text-xl font-semibold mb-3 text-green-400 font-mono">Privacy First</h3>
               <p className="text-gray-300 font-mono text-sm">
-                Automatic EXIF removal, no tracking, and full data export capabilities.
+                Minimal logging, no trackers, and clear export tooling so you stay in control.
               </p>
             </TerminalWindow>
           </div>
         </div>
       </section>
 
-      {/* Pricing Section */}
-      <section id="pricing" className="py-20 border-t border-green-500/20 relative z-10">
+      {/* Web of Trust Access Section */}
+      <section id="access" className="py-20 border-t border-green-500/20 relative z-10">
         <div className="container mx-auto px-4">
           <h2 className="text-3xl font-bold text-center mb-12 text-green-400 font-mono">
-            {'$ cat /pricing/plans.json'}
+            {'$ cat /access/web-of-trust.md'}
           </h2>
-          <div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-            {/* Relay Plan */}
-            <TerminalWindow title="relay-basic.plan">
-              <h3 className="text-2xl font-semibold mb-4 text-green-400 font-mono">Relay Access</h3>
-              <div className="text-4xl font-bold mb-4 text-white font-mono">
-                1,250 <span className="text-lg text-gray-400">sats/month</span>
+          
+          <div className="max-w-4xl mx-auto space-y-8">
+            {/* Main Description */}
+            <TerminalWindow title="README.md">
+              <div className="prose prose-invert max-w-none font-mono text-sm">
+                <h3 className="text-2xl font-semibold mb-4 text-green-400">Invite-Only Web of Trust System</h3>
+                <p className="text-gray-300 mb-4">
+                  relay.pleb.one operates on a <span className="text-green-400 font-bold">Web of Trust</span> model. 
+                  Access is granted through personal invitations, creating a network of trusted users who vouch for each other.
+                </p>
+                <p className="text-gray-300">
+                  This system ensures high-quality content and reduces spam while maintaining decentralization principles.
+                </p>
               </div>
-              <ul className="space-y-3 mb-8 text-gray-300 font-mono text-sm">
-                <li className="flex items-center">
-                  <span className="text-green-400 mr-2">[✓]</span>
-                  Full Nostr relay access
-                </li>
-                <li className="flex items-center">
-                  <span className="text-green-400 mr-2">[✓]</span>
-                  All supported NIPs
-                </li>
-                <li className="flex items-center">
-                  <span className="text-green-400 mr-2">[✓]</span>
-                  High-speed connections
-                </li>
-                <li className="flex items-center">
-                  <span className="text-green-400 mr-2">[✓]</span>
-                  Export your data anytime
-                </li>
-              </ul>
-              <GlowingButton className="w-full">
-                Subscribe Now
-              </GlowingButton>
             </TerminalWindow>
-            
-            {/* Combo Plan */}
-            <div className="relative">
-              <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-green-400 text-black px-4 py-1 rounded-full text-sm font-semibold z-20">
-                RECOMMENDED
-              </div>
-              <TerminalWindow title="premium-combo.plan">
-                <div className="bg-gradient-to-br from-green-600/20 to-cyan-600/20 rounded p-4 -m-4">
-                  <h3 className="text-2xl font-semibold mb-4 text-green-400 font-mono">Relay + Blossom</h3>
-                  <div className="text-4xl font-bold mb-4 text-white font-mono">
-                    6,250 <span className="text-lg text-gray-400">sats/month</span>
+
+            {/* How It Works */}
+            <div className="grid md:grid-cols-2 gap-6">
+              <TerminalWindow title="initial-access.sh">
+                <div className="space-y-3">
+                  <h4 className="text-lg font-semibold text-green-400 mb-3">🔑 Getting Started</h4>
+                  <div className="text-gray-300 text-sm space-y-2">
+                    <p><span className="text-green-400">[1]</span> Receive an invite from an existing member</p>
+                    <p><span className="text-green-400">[2]</span> Connect with your Nostr keys</p>
+                    <p><span className="text-green-400">[3]</span> Get <span className="text-cyan-400 font-bold">5 invites</span> to share monthly</p>
+                    <p className="text-xs text-gray-500 mt-3">
+                      * Initial members are carefully vetted by admins
+                    </p>
                   </div>
-                  <ul className="space-y-3 mb-8 text-gray-300 font-mono text-sm">
-                    <li className="flex items-center">
-                      <span className="text-green-400 mr-2">[✓]</span>
-                      Everything in Relay plan
-                    </li>
-                    <li className="flex items-center">
-                      <span className="text-green-400 mr-2">[✓]</span>
-                      Blossom server access
-                    </li>
-                    <li className="flex items-center">
-                      <span className="text-green-400 mr-2">[✓]</span>
-                      Image hosting & management
-                    </li>
-                    <li className="flex items-center">
-                      <span className="text-green-400 mr-2">[✓]</span>
-                      Automatic EXIF removal
-                    </li>
-                    <li className="flex items-center">
-                      <span className="text-green-400 mr-2">[✓]</span>
-                      Secure cloud storage
-                    </li>
-                  </ul>
-                  <GlowingButton className="w-full">
-                    Subscribe Now
-                  </GlowingButton>
+                </div>
+              </TerminalWindow>
+
+              <TerminalWindow title="invite-system.js">
+                <div className="space-y-3">
+                  <h4 className="text-lg font-semibold text-green-400 mb-3">🎟️ Monthly Invites</h4>
+                  <div className="text-gray-300 text-sm space-y-2">
+                    <p><span className="text-green-400">[✓]</span> <span className="font-bold">5 invites/month</span> for all members</p>
+                    <p><span className="text-green-400">[✓]</span> Invites reset on the 1st of each month</p>
+                    <p><span className="text-green-400">[✓]</span> Share with trusted friends & colleagues</p>
+                    <p className="text-xs text-gray-500 mt-3">
+                      * Unused invites don&apos;t roll over
+                    </p>
+                  </div>
                 </div>
               </TerminalWindow>
             </div>
-          </div>
-          
-          <div className="text-center mt-8">
-            <p className="text-gray-400">
-              💡 Save 15% with yearly subscriptions • No KYC required • Cancel anytime
-            </p>
+
+            {/* Accountability System */}
+            <TerminalWindow title="accountability.cfg">
+              <h4 className="text-xl font-semibold text-green-400 mb-4">⚖️ Accountability & Trust</h4>
+              <div className="grid md:grid-cols-3 gap-6 text-sm">
+                <div className="space-y-2">
+                  <div className="text-red-400 font-bold mb-2">⚠️ Blacklist Violation</div>
+                  <p className="text-gray-300">
+                    If someone you invited gets <span className="text-red-400">blacklisted</span>, 
+                    you lose invite privileges for <span className="font-bold">1 month</span>.
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="text-orange-400 font-bold mb-2">🚫 Three Strikes</div>
+                  <p className="text-gray-300">
+                    <span className="text-orange-400 font-bold">3 blacklist violations</span> result in 
+                    permanent loss of invite privileges unless reinstated by admin review.
+                  </p>
+                </div>
+                
+                <div className="space-y-2">
+                  <div className="text-cyan-400 font-bold mb-2">⭐ Good Standing</div>
+                  <p className="text-gray-300">
+                    Members with <span className="text-cyan-400 font-bold">no violations</span> after 
+                    <span className="font-bold"> 3 months</span> earn <span className="text-green-400 font-bold">15 invites/month</span>!
+                  </p>
+                </div>
+              </div>
+            </TerminalWindow>
+
+            {/* Benefits */}
+            <div className="grid md:grid-cols-2 gap-6">
+              <TerminalWindow title="benefits.list">
+                <h4 className="text-lg font-semibold text-green-400 mb-3">✨ Why This Works</h4>
+                <ul className="space-y-2 text-gray-300 text-sm">
+                  <li className="flex items-start">
+                    <span className="text-green-400 mr-2">[✓]</span>
+                    <span><span className="font-bold">Quality community:</span> Members vouch for their invites</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="text-green-400 mr-2">[✓]</span>
+                    <span><span className="font-bold">Reduced spam:</span> Accountability discourages abuse</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="text-green-400 mr-2">[✓]</span>
+                    <span><span className="font-bold">Organic growth:</span> Trusted networks expand naturally</span>
+                  </li>
+                  <li className="flex items-start">
+                    <span className="text-green-400 mr-2">[✓]</span>
+                    <span><span className="font-bold">Self-moderating:</span> Community polices itself</span>
+                  </li>
+                </ul>
+              </TerminalWindow>
+
+              <TerminalWindow title="stats.json">
+                <h4 className="text-lg font-semibold text-green-400 mb-3">📊 Quick Stats</h4>
+                <div className="space-y-3 text-sm">
+                  <div className="flex justify-between text-gray-300">
+                    <span>Base invite quota:</span>
+                    <span className="text-cyan-400 font-bold">5/month</span>
+                  </div>
+                  <div className="flex justify-between text-gray-300">
+                    <span>Trusted member quota:</span>
+                    <span className="text-green-400 font-bold">15/month</span>
+                  </div>
+                  <div className="flex justify-between text-gray-300">
+                    <span>Time to trusted status:</span>
+                    <span className="text-green-400 font-bold">3 months</span>
+                  </div>
+                  <div className="flex justify-between text-gray-300">
+                    <span>Violation suspension:</span>
+                    <span className="text-orange-400 font-bold">1 month</span>
+                  </div>
+                  <div className="flex justify-between text-gray-300">
+                    <span>Permanent ban threshold:</span>
+                    <span className="text-red-400 font-bold">3 violations</span>
+                  </div>
+                </div>
+              </TerminalWindow>
+            </div>
+
+            {/* CTA */}
+            <div className="text-center pt-8">
+              <div className="inline-block">
+                <TerminalWindow title="get-started.sh">
+                  <div className="text-center py-4 px-8">
+                    <p className="text-gray-300 mb-4 font-mono text-sm">
+                      Ready to join the Web of Trust?
+                    </p>
+                    <Link href="/request">
+                      <GlowingButton className="text-lg px-8 py-3">
+                        Request Invite Access
+                      </GlowingButton>
+                    </Link>
+                    <p className="text-xs text-gray-500 mt-4">
+                      Already have an invite? <Link href="/login" className="text-green-400 hover:underline">Sign in</Link> to activate your account
+                    </p>
+                  </div>
+                </TerminalWindow>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -243,6 +297,8 @@ export default function HomePage() {
               <a href="/privacy" className="hover:text-green-400 transition">[Privacy]</a>
               {" • "}
               <a href="/contact" className="hover:text-green-400 transition">[Contact]</a>
+              {" • "}
+              <Link href="/report" className="hover:text-green-400 transition">[Report Abuse]</Link>
             </p>
             <div className="mt-4 text-xs text-gray-500">
               <span>{"> System uptime: 99.9% | "}</span>
@@ -250,7 +306,7 @@ export default function HomePage() {
                 href="/nips"
                 className="text-green-400 hover:text-green-300 underline decoration-dotted"
               >
-                NIPs: 01,09,11,17,23,40,42,50,51,56,62,77,86
+                NIPs: 01,09,11,17,23,40,42,50,51,56,62,65,66,77,86
               </Link>
               <span>{" | ⚡ Lightning enabled <"}</span>
             </div>

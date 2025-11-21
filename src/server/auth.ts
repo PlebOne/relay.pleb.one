@@ -52,19 +52,35 @@ declare module "next-auth" {
  * @see https://next-auth.js.org/configuration/options
  */
 export const authOptions: NextAuthOptions = {
+  session: {
+    strategy: "jwt",
+  },
   callbacks: {
-    session: ({ session, user }) => ({
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;
+        token.npub = user.npub;
+        token.pubkey = user.pubkey;
+        token.isAdmin = user.isAdmin;
+        token.whitelistStatus = user.whitelistStatus;
+        token.inviteQuota = user.inviteQuota;
+        token.invitesUsed = user.invitesUsed;
+        token.invitePrivilegesSuspended = user.invitePrivilegesSuspended;
+      }
+      return token;
+    },
+    session: ({ session, token }) => ({
       ...session,
       user: {
         ...session.user,
-        id: user.id,
-        npub: user.npub,
-        pubkey: user.pubkey,
-        isAdmin: user.isAdmin || user.npub === env.ADMIN_NPUB,
-        whitelistStatus: user.whitelistStatus,
-        inviteQuota: user.inviteQuota,
-        invitesUsed: user.invitesUsed,
-        invitePrivilegesSuspended: user.invitePrivilegesSuspended,
+        id: token.id as string,
+        npub: token.npub as string,
+        pubkey: token.pubkey as string,
+        isAdmin: token.isAdmin as boolean,
+        whitelistStatus: token.whitelistStatus as "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED",
+        inviteQuota: token.inviteQuota as number,
+        invitesUsed: token.invitesUsed as number,
+        invitePrivilegesSuspended: token.invitePrivilegesSuspended as boolean,
       },
     }),
   },
@@ -109,7 +125,13 @@ export const authOptions: NextAuthOptions = {
 
           if (!user) {
             const npub = nip19.npubEncode(credentials.pubkey);
-            const isAdmin = npub === env.ADMIN_NPUB;
+            
+            // Check if this is the first user ever
+            const userCount = await db.user.count();
+            const isFirstUser = userCount === 0;
+            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
+            const isAdmin = isFirstUser || isConfiguredAdmin;
+            
             user = await db.user.create({
               data: {
                 pubkey: credentials.pubkey,
@@ -174,6 +196,134 @@ export const authOptions: NextAuthOptions = {
           invitesUsed: user.invitesUsed,
           invitePrivilegesSuspended: user.invitePrivilegesSuspended,
         };
+      },
+    }),
+    CredentialsProvider({
+      id: "nsec",
+      name: "Nostr Private Key (nsec)",
+      credentials: {
+        nsec: { label: "nsec", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.nsec) {
+          return null;
+        }
+
+        try {
+          const decoded = nip19.decode(credentials.nsec.trim());
+          if (decoded.type !== "nsec") {
+            return null;
+          }
+
+          const privateKey = decoded.data;
+          const pubkeyBytes = typeof privateKey === "string" 
+            ? Buffer.from(privateKey, "hex")
+            : privateKey;
+          
+          // Import getPublicKey from nostr-tools to derive public key
+          const { getPublicKey } = await import("nostr-tools");
+          const pubkey = getPublicKey(pubkeyBytes);
+
+          let user = await db.user.findUnique({
+            where: { pubkey },
+          });
+
+          if (!user) {
+            const npub = nip19.npubEncode(pubkey);
+            
+            // Check if this is the first user ever
+            const userCount = await db.user.count();
+            const isFirstUser = userCount === 0;
+            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
+            const isAdmin = isFirstUser || isConfiguredAdmin;
+            
+            user = await db.user.create({
+              data: {
+                pubkey,
+                npub,
+                isAdmin,
+                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
+                inviteQuota: isAdmin ? 999 : 5,
+              },
+            });
+          }
+
+          return {
+            id: user.id,
+            pubkey: user.pubkey,
+            npub: user.npub,
+            isAdmin: user.isAdmin,
+            whitelistStatus: user.whitelistStatus,
+            inviteQuota: user.inviteQuota,
+            invitesUsed: user.invitesUsed,
+            invitePrivilegesSuspended: user.invitePrivilegesSuspended,
+          };
+        } catch (error) {
+          console.error("nsec auth error:", error);
+          return null;
+        }
+      },
+    }),
+    CredentialsProvider({
+      id: "hex-key",
+      name: "Hex Private Key",
+      credentials: {
+        hexKey: { label: "Hex Private Key", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.hexKey) {
+          return null;
+        }
+
+        try {
+          const privateKey = credentials.hexKey.trim();
+          
+          // Validate hex format (64 chars)
+          if (!/^[0-9a-fA-F]{64}$/.test(privateKey)) {
+            return null;
+          }
+
+          const { getPublicKey } = await import("nostr-tools");
+          const pubkey = getPublicKey(Buffer.from(privateKey, "hex"));
+
+          let user = await db.user.findUnique({
+            where: { pubkey },
+          });
+
+          if (!user) {
+            const npub = nip19.npubEncode(pubkey);
+            
+            // Check if this is the first user ever
+            const userCount = await db.user.count();
+            const isFirstUser = userCount === 0;
+            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
+            const isAdmin = isFirstUser || isConfiguredAdmin;
+            
+            user = await db.user.create({
+              data: {
+                pubkey,
+                npub,
+                isAdmin,
+                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
+                inviteQuota: isAdmin ? 999 : 5,
+              },
+            });
+          }
+
+          return {
+            id: user.id,
+            pubkey: user.pubkey,
+            npub: user.npub,
+            isAdmin: user.isAdmin,
+            whitelistStatus: user.whitelistStatus,
+            inviteQuota: user.inviteQuota,
+            invitesUsed: user.invitesUsed,
+            invitePrivilegesSuspended: user.invitePrivilegesSuspended,
+          };
+        } catch (error) {
+          console.error("hex key auth error:", error);
+          return null;
+        }
       },
     }),
   ],

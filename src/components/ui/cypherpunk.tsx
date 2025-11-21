@@ -154,17 +154,36 @@ export function StatusIndicator({
 
 export function BitcoinPrice() {
   const [price, setPrice] = useState<number | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   
   useEffect(() => {
-    // Mock Bitcoin price - in real app would fetch from API
-    setPrice(43250 + Math.random() * 1000);
+    const fetchPrice = async () => {
+      try {
+        const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd");
+        const data = await response.json();
+        setPrice(data.bitcoin.usd);
+        setIsLoading(false);
+      } catch (error) {
+        console.error("Failed to fetch Bitcoin price:", error);
+        setPrice(null);
+        setIsLoading(false);
+      }
+    };
+
+    // Fetch immediately
+    fetchPrice();
+    
+    // Update every 30 seconds
+    const interval = setInterval(fetchPrice, 30000);
+    
+    return () => clearInterval(interval);
   }, []);
   
   return (
     <div className="flex items-center space-x-2 text-sm">
       <span className="text-bitcoin-400">₿</span>
       <span className="text-white font-mono">
-        ${price ? price.toLocaleString() : "Loading..."}
+        {isLoading ? "Loading..." : price ? `$${price.toLocaleString()}` : "N/A"}
       </span>
     </div>
   );

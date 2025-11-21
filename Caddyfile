@@ -2,6 +2,23 @@
 # Automatic HTTPS with Let's Encrypt
 
 {$RELAY_DOMAIN:relay.pleb.one} {
+    # WebSocket for Nostr relay (Match Upgrade header)
+    @websocket {
+        header Connection *Upgrade*
+        header Upgrade websocket
+    }
+    handle @websocket {
+        reverse_proxy relay:3001
+    }
+
+    # NIP-11 Relay Information Document
+    @nip11 {
+        header Accept application/nostr+json
+    }
+    handle @nip11 {
+        reverse_proxy relay:3001
+    }
+
     # Main application (Next.js)
     handle /api/* {
         reverse_proxy app:3000
@@ -9,11 +26,6 @@
     
     handle /* {
         reverse_proxy app:3000
-    }
-    
-    # WebSocket for Nostr relay
-    handle /ws {
-        reverse_proxy app:3001
     }
     
     # Health check endpoint
@@ -48,20 +60,20 @@
         format json
     }
     
-    # Rate limiting for API endpoints
-    rate_limit {
-        zone api {
-            key {remote_host}
-            events 100
-            window 1m
-        }
-        
-        zone websocket {
-            key {remote_host}
-            events 10
-            window 1m
-        }
-    }
+    # Rate limiting for API endpoints (Requires custom Caddy build with rate-limit module)
+    # rate_limit {
+    #     zone api {
+    #         key {remote_host}
+    #         events 100
+    #         window 1m
+    #     }
+    #     
+    #     zone websocket {
+    #         key {remote_host}
+    #         events 10
+    #         window 1m
+    #     }
+    # }
 }
 
 # Development configuration (if not using custom domain)
@@ -69,7 +81,7 @@ localhost:80 {
     reverse_proxy app:3000
     
     handle /ws {
-        reverse_proxy app:3001
+        reverse_proxy relay:3001
     }
 }
 

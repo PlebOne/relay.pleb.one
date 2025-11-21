@@ -3,7 +3,10 @@ import { db } from "@/server/db";
 /**
  * Monthly invite refresh job
  * 
- * Resets invitesUsed to 0 for all eligible users (max 5 invites per month)
+ * - Resets invitesUsed to 0 for all eligible users
+ * - Increases invite quota to 15 for users with 3+ months, no violations
+ * - Lifts 1-month suspensions (but not permanent bans)
+ * - Updates account age tracking
  * 
  * Run this as a cron job on the 1st of each month:
  * - Via external cron: 0 0 1 * * /path/to/node monthly-refresh.js
@@ -11,37 +14,94 @@ import { db } from "@/server/db";
  * - Via GitHub Actions: .github/workflows/monthly-refresh.yml
  * - Via admin panel: manual button (already implemented)
  * 
- * Eligible users:
+ * Eligible users for refresh:
  * - Active whitelist status
- * - Not suspended
+ * - Not permanently banned
  * - Not admin (admins have unlimited)
  * - Haven't refreshed in the last month
  */
 export async function runMonthlyInviteRefresh() {
   const oneMonthAgo = new Date();
   oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+  
+  const now = new Date();
 
-  const result = await db.user.updateMany({
+  // 1. Increment account age for all active users
+  await db.user.updateMany({
+    where: {
+      whitelistStatus: "ACTIVE",
+      isAdmin: false,
+    },
+    data: {
+      accountAgeMonths: {
+        increment: 1,
+      },
+    },
+  });
+
+  // 2. Lift temporary suspensions (1 month has passed)
+  const suspensionLiftResult = await db.user.updateMany({
+    where: {
+      invitePrivilegesSuspended: true,
+      permanentlyBanned: false, // Don't lift permanent bans
+      lastBlacklistViolation: {
+        lt: oneMonthAgo, // More than 1 month ago
+      },
+    },
+    data: {
+      invitePrivilegesSuspended: false,
+      requiresAdminApproval: false,
+      inviteSuspensionReason: null,
+    },
+  });
+
+  // 3. Upgrade trusted users (3+ months, no violations) to 15 invites
+  const upgradeResult = await db.user.updateMany({
+    where: {
+      accountAgeMonths: {
+        gte: 3,
+      },
+      blacklistViolations: 0,
+      inviteQuota: {
+        lt: 15, // Haven't been upgraded yet
+      },
+      whitelistStatus: "ACTIVE",
+      isAdmin: false,
+    },
+    data: {
+      inviteQuota: 15,
+      lastQuotaIncrease: now,
+    },
+  });
+
+  // 4. Reset invites for eligible users
+  const refreshResult = await db.user.updateMany({
     where: {
       lastInviteRefresh: {
         lt: oneMonthAgo,
       },
       invitePrivilegesSuspended: false,
+      permanentlyBanned: false,
       whitelistStatus: "ACTIVE",
       isAdmin: false,
     },
     data: {
       invitesUsed: 0,
-      lastInviteRefresh: new Date(),
+      lastInviteRefresh: now,
     },
   });
 
-  console.log(`✅ Monthly invite refresh complete. Refreshed ${result.count} users.`);
+  console.log(`✅ Monthly invite refresh complete.`);
+  console.log(`   - Refreshed invites: ${refreshResult.count} users`);
+  console.log(`   - Lifted suspensions: ${suspensionLiftResult.count} users`);
+  console.log(`   - Upgraded to 15 invites: ${upgradeResult.count} users`);
   
   return {
     success: true,
-    refreshedCount: result.count,
-    timestamp: new Date().toISOString(),
+    refreshedCount: refreshResult.count,
+    suspensionsLifted: suspensionLiftResult.count,
+    usersUpgraded: upgradeResult.count,
+    timestamp: now.toISOString(),
   };
 }
 

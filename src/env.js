@@ -32,29 +32,12 @@ export const env = createEnv({
     
     // Admin Configuration
     ADMIN_NPUB: z.string().default("npub13hyx3qsqk3r7ctjqrr49uskut4yqjsxt8uvu4rekr55p08wyhf0qq90nt7"),
-    
-    // Payment Configuration
-    LIGHTNING_NODE_URL: z.string().url().optional(),
-    LIGHTNING_MACAROON: z.string().optional(),
-    MONTHLY_PRICE_SATS: z.coerce.number().default(1250),
-    YEARLY_PRICE_SATS: z.coerce.number().default(12500),
-    BLOSSOM_MONTHLY_PRICE_SATS: z.coerce.number().default(5000),
-    BLOSSOM_YEARLY_PRICE_SATS: z.coerce.number().default(50000),
-    
-    // Storage Configuration
-    CONTABO_ENDPOINT: z.string().url().default("https://usc1.contabostorage.com"),
-    CONTABO_BUCKET: z.string().default("relay.pleb.one"),
-    CONTABO_ACCESS_KEY: z.string().optional(),
-    CONTABO_SECRET_KEY: z.string().optional(),
+    ADMIN_DM_NSEC: z.string().optional(),
     
     // Rate Limiting
     MAX_EVENTS_PER_MINUTE: z.coerce.number().default(60),
     MAX_SUBSCRIPTIONS_PER_CONNECTION: z.coerce.number().default(20),
     MAX_EVENT_SIZE: z.coerce.number().default(65536), // 64KB
-    
-    // Image Processing
-    MAX_IMAGE_SIZE: z.coerce.number().default(10485760), // 10MB
-    ALLOWED_IMAGE_TYPES: z.string().default("image/jpeg,image/png,image/webp,image/gif"),
   },
 
   /**
@@ -85,25 +68,11 @@ export const env = createEnv({
     RELAY_PORT: process.env.RELAY_PORT,
     
     ADMIN_NPUB: process.env.ADMIN_NPUB,
-    
-    LIGHTNING_NODE_URL: process.env.LIGHTNING_NODE_URL,
-    LIGHTNING_MACAROON: process.env.LIGHTNING_MACAROON,
-    MONTHLY_PRICE_SATS: process.env.MONTHLY_PRICE_SATS,
-    YEARLY_PRICE_SATS: process.env.YEARLY_PRICE_SATS,
-    BLOSSOM_MONTHLY_PRICE_SATS: process.env.BLOSSOM_MONTHLY_PRICE_SATS,
-    BLOSSOM_YEARLY_PRICE_SATS: process.env.BLOSSOM_YEARLY_PRICE_SATS,
-    
-    CONTABO_ENDPOINT: process.env.CONTABO_ENDPOINT,
-    CONTABO_BUCKET: process.env.CONTABO_BUCKET,
-    CONTABO_ACCESS_KEY: process.env.CONTABO_ACCESS_KEY,
-    CONTABO_SECRET_KEY: process.env.CONTABO_SECRET_KEY,
+    ADMIN_DM_NSEC: process.env.ADMIN_DM_NSEC,
     
     MAX_EVENTS_PER_MINUTE: process.env.MAX_EVENTS_PER_MINUTE,
     MAX_SUBSCRIPTIONS_PER_CONNECTION: process.env.MAX_SUBSCRIPTIONS_PER_CONNECTION,
     MAX_EVENT_SIZE: process.env.MAX_EVENT_SIZE,
-    
-    MAX_IMAGE_SIZE: process.env.MAX_IMAGE_SIZE,
-    ALLOWED_IMAGE_TYPES: process.env.ALLOWED_IMAGE_TYPES,
     
     NEXT_PUBLIC_RELAY_URL: process.env.NEXT_PUBLIC_RELAY_URL,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,

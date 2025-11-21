@@ -103,6 +103,24 @@ const nipEntries = [
     reference: "https://github.com/nostr-protocol/nips/blob/master/62.md",
   },
   {
+    number: "65",
+    title: "Relay List Metadata",
+    summary:
+      "Defines kind 10002 events where users publish their preferred read/write relays, allowing clients to discover where to find them.",
+    focus: "Discovery",
+    status: "draft · optional",
+    reference: "https://github.com/nostr-protocol/nips/blob/master/65.md",
+  },
+  {
+    number: "66",
+    title: "Decentralized Relay Monitoring",
+    summary:
+      "Relays publish kind 30166 events containing their own metrics, software version, and supported NIPs for decentralized monitoring.",
+    focus: "Monitoring",
+    status: "draft · optional",
+    reference: "https://github.com/nostr-protocol/nips/blob/master/66.md",
+  },
+  {
     number: "77",
     title: "Negentropy Syncing",
     summary:
@@ -119,6 +137,15 @@ const nipEntries = [
     focus: "Relay ops",
     status: "draft · optional",
     reference: "https://github.com/nostr-protocol/nips/blob/master/86.md",
+  },
+  {
+    number: "87",
+    title: "Nostr Discovery & Content Curation",
+    summary:
+      "Defines a standard for discovering content and curating collections of events, pubkeys, and other data to improve content discovery.",
+    focus: "Discovery",
+    status: "draft · optional",
+    reference: "https://github.com/nostr-protocol/nips/blob/master/87.md",
   },
 ] as const;
 

@@ -3,6 +3,7 @@ import { TRPCError } from "@trpc/server";
 import { nip19 } from "nostr-tools";
 
 import { adminProcedure, createTRPCRouter } from "@/server/api/trpc";
+import { fetchProfileMetadata } from "@/lib/nostr";
 
 const whitelistStatusEnum = z.enum(["PENDING", "ACTIVE", "PAUSED", "REVOKED"]);
 
@@ -16,6 +17,18 @@ const decodeNpub = (npub: string) => {
 };
 
 export const adminRouter = createTRPCRouter({
+  getProfilePreview: adminProcedure
+    .input(z.object({ npub: z.string() }))
+    .query(async ({ input }) => {
+      try {
+        const pubkey = decodeNpub(input.npub);
+        const metadata = await fetchProfileMetadata(pubkey);
+        return metadata;
+      } catch (error) {
+        return null;
+      }
+    }),
+
   listWhitelist: adminProcedure
     .input(
       z
@@ -53,6 +66,11 @@ export const adminRouter = createTRPCRouter({
           whitelistNotes: true,
           inviteQuota: true,
           invitesUsed: true,
+          blacklistViolations: true,
+          lastBlacklistViolation: true,
+          permanentlyBanned: true,
+          accountAgeMonths: true,
+          invitePrivilegesSuspended: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -85,6 +103,14 @@ export const adminRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid npub" });
       }
 
+      let displayName = input.displayName;
+      if (!displayName) {
+        const metadata = await fetchProfileMetadata(pubkey);
+        if (metadata) {
+          displayName = metadata.displayName || metadata.name;
+        }
+      }
+
       const existingUser = await ctx.db.user.findFirst({
         where: { OR: [{ npub: input.npub.trim() }, { pubkey }] },
       });
@@ -95,7 +121,7 @@ export const adminRouter = createTRPCRouter({
           data: {
             npub: input.npub.trim(),
             pubkey,
-            displayName: input.displayName ?? existingUser.displayName,
+            displayName: displayName ?? existingUser.displayName,
             whitelistStatus: input.status ?? "ACTIVE",
             whitelistNotes: input.note ?? existingUser.whitelistNotes,
             inviteQuota: input.inviteQuota ?? existingUser.inviteQuota,
@@ -108,7 +134,7 @@ export const adminRouter = createTRPCRouter({
         data: {
           npub: input.npub.trim(),
           pubkey,
-          displayName: input.displayName,
+          displayName: displayName,
           whitelistStatus: input.status ?? "ACTIVE",
           whitelistNotes: input.note,
           inviteQuota: input.inviteQuota ?? 5,
@@ -158,7 +184,18 @@ export const adminRouter = createTRPCRouter({
         }
       }
 
-      return user;
+      // Return DM payload for client-side sending
+      return {
+        user,
+        dmPayload: user.pubkey
+          ? {
+              targetPubkey: user.pubkey,
+              targetNpub: user.npub,
+              status: input.status,
+              reason: input.note,
+            }
+          : undefined,
+      };
     }),
 
   removeWhitelistEntry: adminProcedure
@@ -175,20 +212,37 @@ export const adminRouter = createTRPCRouter({
               id: true,
               isAdmin: true,
               invitePrivilegesSuspended: true,
+              blacklistViolations: true,
+              permanentlyBanned: true,
             },
           },
         },
       });
 
-      // Blacklist propagation when revoking
+      // Blacklist propagation: track violations for the inviter
       if (user.invitedById && user.invitedBy) {
-        if (!user.invitedBy.isAdmin && !user.invitedBy.invitePrivilegesSuspended) {
+        if (!user.invitedBy.isAdmin) {
+          const newViolationCount = user.invitedBy.blacklistViolations + 1;
+          const now = new Date();
+          
+          // Determine suspension based on violation count
+          const isPermanentlyBanned = newViolationCount >= 3;
+          const isSuspended = !isPermanentlyBanned; // Suspend for 1 month if not permanently banned
+          
+          const suspensionEndDate = new Date(now);
+          suspensionEndDate.setMonth(suspensionEndDate.getMonth() + 1);
+
           await ctx.db.user.update({
             where: { id: user.invitedById },
             data: {
+              blacklistViolations: newViolationCount,
+              lastBlacklistViolation: now,
               invitePrivilegesSuspended: true,
-              inviteSuspensionReason: `Invited user ${user.displayName ?? user.npub} was blacklisted`,
-              requiresAdminApproval: true,
+              permanentlyBanned: isPermanentlyBanned,
+              inviteSuspensionReason: isPermanentlyBanned
+                ? `Permanently banned: ${newViolationCount} blacklist violations (invited user ${user.displayName ?? user.npub} was blacklisted)`
+                : `Suspended until ${suspensionEndDate.toLocaleDateString()}: Invited user ${user.displayName ?? user.npub} was blacklisted (violation ${newViolationCount}/3)`,
+              requiresAdminApproval: !isPermanentlyBanned, // Only require approval if not permanently banned
             },
           });
         }
@@ -223,6 +277,40 @@ export const adminRouter = createTRPCRouter({
 
     return users;
   }),
+
+  refreshDisplayName: adminProcedure
+    .input(z.object({ userId: z.string().cuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const user = await ctx.db.user.findUnique({
+        where: { id: input.userId },
+        select: {
+          id: true,
+          pubkey: true,
+          displayName: true,
+        },
+      });
+
+      if (!user || !user.pubkey) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "User not found" });
+      }
+
+      const metadata = await fetchProfileMetadata(user.pubkey);
+      if (!metadata) {
+        return { updated: false, displayName: user.displayName ?? null };
+      }
+
+      const nextDisplayName = metadata.displayName || metadata.name || null;
+      if (!nextDisplayName || nextDisplayName === user.displayName) {
+        return { updated: false, displayName: user.displayName ?? nextDisplayName };
+      }
+
+      await ctx.db.user.update({
+        where: { id: user.id },
+        data: { displayName: nextDisplayName },
+      });
+
+      return { updated: true, displayName: nextDisplayName };
+    }),
 
   approveInvitePrivileges: adminProcedure
     .input(z.object({ userId: z.string().cuid() }))

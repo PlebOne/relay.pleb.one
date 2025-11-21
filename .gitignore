@@ -21,6 +21,7 @@ yarn-error.log*
 .idea
 .vscode
 
-# databases & uploads
+# databases & backups
 prisma/dev.db*
 *.sqlite
+tsconfig.tsbuildinfo

@@ -1,8 +1,0 @@
-import { createTRPCRouter, publicProcedure } from "@/server/api/trpc";
-
-export const blossomRouter = createTRPCRouter({
-  // Blossom routes will be implemented here
-  getPlaceholder: publicProcedure.query(() => {
-    return { message: "Blossom router placeholder" };
-  }),
-});

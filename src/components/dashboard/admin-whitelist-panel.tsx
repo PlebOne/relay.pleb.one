@@ -1,9 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RouterOutputs } from "@/trpc/server";
 import { api } from "@/trpc/react";
 import { GlowingButton } from "@/components/ui/cypherpunk";
+import { sendDmViaNip07, isNip07Available } from "@/lib/nostr-client-dm";
+import { buildStatusChangeDmMessage } from "@/lib/whitelist-message";
+
+const DEFAULT_RELAYS = [
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+];
 
 const STATUS_OPTIONS = ["ACTIVE", "PAUSED", "PENDING", "REVOKED"] as const;
 type WhitelistStatus = (typeof STATUS_OPTIONS)[number];
@@ -34,6 +42,29 @@ export function AdminWhitelistPanel() {
     note: "",
   });
 
+  // Debounce logic for admin panel
+  const [debouncedNpub, setDebouncedNpub] = useState("");
+  
+  const handleNpubChange = (val: string) => {
+    setNewEntry((current) => ({ ...current, npub: val }));
+    setTimeout(() => setDebouncedNpub(val), 500);
+  };
+
+  const previewQuery = api.admin.getProfilePreview.useQuery(
+    { npub: debouncedNpub },
+    { 
+      enabled: debouncedNpub.startsWith("npub1") && debouncedNpub.length > 10,
+      retry: false 
+    }
+  );
+
+  useMemo(() => {
+    if (previewQuery.data && !newEntry.displayName) {
+      const name = previewQuery.data.displayName || previewQuery.data.name;
+      if (name) setNewEntry(curr => ({ ...curr, displayName: name }));
+    }
+  }, [previewQuery.data, newEntry.displayName]);
+
   const listInput = useMemo(() => ({
     query: filters.query.trim() || undefined,
     status: filters.statuses.size ? Array.from(filters.statuses) : undefined,
@@ -41,10 +72,27 @@ export function AdminWhitelistPanel() {
 
   const listQuery = api.admin.listWhitelist.useQuery(listInput);
   const pendingQuery = api.admin.listPendingApprovals.useQuery();
+  const processedMissingNames = useRef(new Set<string>());
   const updateStatus = api.admin.updateWhitelistStatus.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await listQuery.refetch();
       await pendingQuery.refetch();
+      
+      // Send DM via NIP-07 if status changed to PAUSED, REVOKED, or ACTIVE
+      if (result?.dmPayload && isNip07Available()) {
+        const { targetPubkey, status, reason } = result.dmPayload;
+        if (status === "PAUSED" || status === "REVOKED" || status === "ACTIVE") {
+          try {
+            const dmContent = buildStatusChangeDmMessage(status, reason);
+            const dmResult = await sendDmViaNip07(targetPubkey, dmContent, DEFAULT_RELAYS);
+            if (!dmResult.success) {
+              console.warn("Failed to send status change DM:", dmResult.error);
+            }
+          } catch (error) {
+            console.error("Error sending status change DM:", error);
+          }
+        }
+      }
     },
   });
   const upsertEntry = api.admin.upsertWhitelistEntry.useMutation({
@@ -64,6 +112,45 @@ export function AdminWhitelistPanel() {
       await listQuery.refetch();
     },
   });
+  const {
+    mutateAsync: refreshDisplayName,
+    isPending: isRefreshingDisplayName,
+  } = api.admin.refreshDisplayName.useMutation({
+    onSuccess: async (result) => {
+      if (result?.updated) {
+        await listQuery.refetch();
+      }
+    },
+  });
+
+  useEffect(() => {
+    if (!listQuery.data || isRefreshingDisplayName) return;
+
+    const usersMissingNames = listQuery.data.filter((user) => !user.displayName && !!user.npub);
+    if (usersMissingNames.length === 0) return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      for (const user of usersMissingNames) {
+        if (cancelled) return;
+        if (processedMissingNames.current.has(user.id)) continue;
+
+        processedMissingNames.current.add(user.id);
+        try {
+          await refreshDisplayName({ userId: user.id });
+        } catch (error) {
+          console.error("Failed to refresh display name", error);
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isRefreshingDisplayName, listQuery.data, refreshDisplayName]);
 
   const toggleStatusFilter = (value: WhitelistStatus) => {
     setFilters((current) => {
@@ -215,8 +302,20 @@ export function AdminWhitelistPanel() {
               className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
               placeholder="npub1..."
               value={newEntry.npub}
-              onChange={(e) => setNewEntry((current) => ({ ...current, npub: e.target.value }))}
+              onChange={(e) => handleNpubChange(e.target.value)}
             />
+            {previewQuery.isLoading && <p className="mt-1 text-xs text-gray-500">Fetching metadata...</p>}
+            {previewQuery.data && (
+              <div className="mt-2 mb-2 flex items-center gap-2 rounded border border-green-500/20 bg-green-900/10 p-2">
+                {previewQuery.data.picture && (
+                  <img src={previewQuery.data.picture} alt="" className="h-8 w-8 rounded-full" />
+                )}
+                <div className="text-xs">
+                  <p className="font-bold text-green-400">{previewQuery.data.displayName || previewQuery.data.name}</p>
+                  <p className="text-gray-400">{previewQuery.data.nip05}</p>
+                </div>
+              </div>
+            )}
             <div className="grid gap-3 md:grid-cols-2">
               <div>
                 <label className="block text-xs uppercase tracking-wide text-green-500/70">Display name</label>

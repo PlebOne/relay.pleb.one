@@ -2,10 +2,11 @@ import { z } from "zod";
 import { nip19 } from "nostr-tools";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
+import { fetchProfileMetadata } from "@/lib/nostr";
 
 /**
  * User management router
- * Handles user profiles, subscriptions, and basic operations
+ * Handles user profiles and basic operations
  */
 export const userRouter = createTRPCRouter({
   /**
@@ -14,19 +15,6 @@ export const userRouter = createTRPCRouter({
   getProfile: protectedProcedure.query(async ({ ctx }) => {
     const user = await ctx.db.user.findUnique({
       where: { id: ctx.session.user.id },
-      include: {
-        subscriptions: {
-          where: {
-            status: "ACTIVE",
-            expiresAt: { gt: new Date() },
-          },
-          orderBy: { createdAt: "desc" },
-        },
-        uploads: {
-          orderBy: { createdAt: "desc" },
-          take: 10,
-        },
-      },
     });
 
     return user;
@@ -49,50 +37,16 @@ export const userRouter = createTRPCRouter({
     }),
 
   /**
-   * Get user subscription status
-   */
-  getSubscriptionStatus: protectedProcedure.query(async ({ ctx }) => {
-    const subscriptions = await ctx.db.subscription.findMany({
-      where: {
-        userId: ctx.session.user.id,
-        status: "ACTIVE",
-        expiresAt: { gt: new Date() },
-      },
-      orderBy: { expiresAt: "desc" },
-    });
-
-    type ActiveSubscription = (typeof subscriptions)[number];
-
-    return {
-      hasRelay: subscriptions.some((s: ActiveSubscription) => 
-        s.type === "RELAY_MONTHLY" || 
-        s.type === "RELAY_YEARLY" || 
-        s.type === "COMBO_MONTHLY" || 
-        s.type === "COMBO_YEARLY"
-      ),
-      hasBlossom: subscriptions.some((s: ActiveSubscription) => 
-        s.type === "BLOSSOM_MONTHLY" || 
-        s.type === "BLOSSOM_YEARLY" || 
-        s.type === "COMBO_MONTHLY" || 
-        s.type === "COMBO_YEARLY"
-      ),
-      subscriptions,
-    };
-  }),
-
-  /**
    * Export user data (GDPR compliance)
    */
   exportData: protectedProcedure.query(async ({ ctx }) => {
     const user = await ctx.db.user.findUnique({
       where: { id: ctx.session.user.id },
       include: {
-        subscriptions: true,
         events: {
           orderBy: { createdAt: "desc" },
           take: 1000, // Limit for performance
         },
-        uploads: true,
       },
     });
 
@@ -104,11 +58,23 @@ export const userRouter = createTRPCRouter({
         email: user?.email,
         createdAt: user?.createdAt,
       },
-      subscriptions: user?.subscriptions || [],
       recentEvents: user?.events || [],
-      uploads: user?.uploads || [],
     };
   }),
+
+  getProfilePreview: protectedProcedure
+    .input(z.object({ npub: z.string() }))
+    .query(async ({ input }) => {
+      try {
+        const decoded = nip19.decode(input.npub.trim());
+        if (decoded.type !== "npub") return null;
+        const pubkey = typeof decoded.data === "string" ? decoded.data : Buffer.from(decoded.data).toString("hex");
+        const metadata = await fetchProfileMetadata(pubkey);
+        return metadata;
+      } catch (error) {
+        return null;
+      }
+    }),
 
   getWhitelistStatus: protectedProcedure.query(async ({ ctx }) => {
     const user = await ctx.db.user.findUnique({
@@ -120,6 +86,11 @@ export const userRouter = createTRPCRouter({
         invitesUsed: true,
         invitePrivilegesSuspended: true,
         inviteSuspensionReason: true,
+        blacklistViolations: true,
+        lastBlacklistViolation: true,
+        permanentlyBanned: true,
+        accountAgeMonths: true,
+        lastQuotaIncrease: true,
       },
     });
 
@@ -135,6 +106,12 @@ export const userRouter = createTRPCRouter({
       invitesAvailable: Math.max(0, user.inviteQuota - user.invitesUsed),
       invitePrivilegesSuspended: user.invitePrivilegesSuspended,
       inviteSuspensionReason: user.inviteSuspensionReason,
+      blacklistViolations: user.blacklistViolations,
+      lastBlacklistViolation: user.lastBlacklistViolation,
+      permanentlyBanned: user.permanentlyBanned,
+      accountAgeMonths: user.accountAgeMonths,
+      lastQuotaIncrease: user.lastQuotaIncrease,
+      isTrustedMember: user.inviteQuota >= 15 && user.blacklistViolations === 0,
     };
   }),
 
@@ -201,6 +178,14 @@ export const userRouter = createTRPCRouter({
         throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot invite yourself" });
       }
 
+      let displayName = input.displayName;
+      if (!displayName) {
+        const metadata = await fetchProfileMetadata(pubkey);
+        if (metadata) {
+          displayName = metadata.displayName || metadata.name;
+        }
+      }
+
       const targetNpub = input.npub.trim();
 
       const existingUser = await ctx.db.user.findFirst({
@@ -220,7 +205,7 @@ export const userRouter = createTRPCRouter({
           data: {
             pubkey,
             npub: existingUser.npub ?? targetNpub,
-            displayName: input.displayName ?? existingUser.displayName,
+            displayName: displayName ?? existingUser.displayName,
             whitelistStatus: "ACTIVE",
             invitedById: inviter.id,
           },
@@ -231,7 +216,7 @@ export const userRouter = createTRPCRouter({
           data: {
             pubkey,
             npub: targetNpub,
-            displayName: input.displayName,
+            displayName: displayName,
             whitelistStatus: "ACTIVE",
             inviteQuota: 5,
             invitedById: inviter.id,
@@ -246,7 +231,7 @@ export const userRouter = createTRPCRouter({
           inviteeId,
           inviteeNpub: targetNpub,
           inviteePubkey: pubkey,
-          inviteeName: input.displayName,
+          inviteeName: displayName,
           notes: input.note,
           status: "APPROVED",
           approvedById: inviter.id,

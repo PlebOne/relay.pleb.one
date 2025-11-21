@@ -27,41 +27,25 @@ model User {
   invitesUsed     Int      @default(0)
   invitePrivilegesSuspended Boolean @default(false)
   inviteSuspensionReason String?
+  blacklistViolations Int @default(0)
+  lastBlacklistViolation DateTime?
+  permanentlyBanned Boolean @default(false)
+  accountAgeMonths Int @default(0)
+  lastQuotaIncrease DateTime?
   requiresAdminApproval Boolean @default(false)
   lastInviteRefresh DateTime @default(now())
   invitedById     String?
   
   // Relations
-  subscriptions Subscription[]
   events        Event[]
-  uploads       Upload[]
   invitesMade   WhitelistInvite[] @relation("InvitesMade")
   invitesReceived WhitelistInvite[] @relation("InviteReceived")
   invitesApproved WhitelistInvite[] @relation("InvitesApproved")
   invitedBy     User? @relation("InvitedByRelation", fields: [invitedById], references: [id])
   usersInvited  User[] @relation("InvitedByRelation")
+  resolvedMessages AdminMessage[]
   
   @@map("users")
-}
-
-// Subscription management for paid access
-model Subscription {
-  id           String           @id @default(cuid())
-  userId       String
-  type         SubscriptionType
-  status       SubscriptionStatus
-  priceInSats  Int
-  startsAt     DateTime
-  expiresAt    DateTime
-  paymentHash  String?
-  invoice      String?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("subscriptions")
 }
 
 // Nostr events storage
@@ -75,6 +59,7 @@ model Event {
   sig         String   // Event signature
   createdAt   DateTime @default(now())
   receivedAt  DateTime @default(now())
+  expiresAt   DateTime? // NIP-40 Expiration
   
   // Relations
   author User? @relation(fields: [pubkey], references: [pubkey])
@@ -88,25 +73,6 @@ model Event {
   @@map("events")
 }
 
-// File uploads for Blossom server
-model Upload {
-  id          String     @id @default(cuid())
-  userId      String
-  filename    String
-  originalName String
-  mimeType    String
-  size        Int
-  url         String
-  hash        String     @unique
-  status      UploadStatus @default(PROCESSING)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  
-  // Relations
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  
-  @@map("uploads")
-}
 
 model WhitelistInvite {
   id            String                @id @default(cuid())
@@ -132,15 +98,13 @@ model WhitelistInvite {
 
 // Relay statistics and metrics
 model RelayStats {
-  id            String   @id @default(cuid())
-  date          DateTime @unique @default(now())
-  totalEvents   Int      @default(0)
-  totalUsers    Int      @default(0)
-  activeUsers   Int      @default(0)
-  totalUploads  Int      @default(0)
-  storageUsed   BigInt   @default(0)
-  revenue       Int      @default(0) // in sats
-  
+  id          String   @id @default(cuid())
+  date        DateTime @unique @default(now())
+  totalEvents Int      @default(0)
+  totalUsers  Int      @default(0)
+  activeUsers Int      @default(0)
+  revenue     Int      @default(0) // in sats
+
   @@map("relay_stats")
 }
 
@@ -155,33 +119,55 @@ model RateLimit {
   @@map("rate_limits")
 }
 
-enum SubscriptionType {
-  RELAY_MONTHLY
-  RELAY_YEARLY
-  BLOSSOM_MONTHLY
-  BLOSSOM_YEARLY
-  COMBO_MONTHLY
-  COMBO_YEARLY
+// Admin message board for support requests, blacklist reports, etc.
+model AdminMessage {
+  id              String              @id @default(cuid())
+  type            AdminMessageType
+  status          AdminMessageStatus  @default(PENDING)
+  subject         String
+  content         String
+  submitterNpub   String?
+  submitterPubkey String?
+  targetNpub      String?             // For blacklist requests or whitelist requests
+  targetPubkey    String?
+  metadata        Json?               // Additional context (IP, user agent, etc.)
+  resolvedById    String?
+  resolvedAt      DateTime?
+  resolution      String?             // Admin notes on how it was resolved
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  
+  resolvedBy      User?               @relation(fields: [resolvedById], references: [id])
+  
+  @@map("admin_messages")
+  @@index([type])
+  @@index([status])
+  @@index([targetPubkey])
 }
 
-enum SubscriptionStatus {
+enum AdminMessageType {
+  BLACKLIST_REQUEST
+  WHITELIST_REQUEST
+  SUPPORT_REQUEST
+  APPEAL
+  REPORT
+}
+
+enum AdminMessageStatus {
   PENDING
-  ACTIVE
-  EXPIRED
-  CANCELLED
+  IN_REVIEW
+  APPROVED
+  DENIED
+  RESOLVED
 }
 
-enum UploadStatus {
-  PROCESSING
-  COMPLETED
-  FAILED
-}
 
 enum WhitelistStatus {
   PENDING
   ACTIVE
   PAUSED
   REVOKED
+  VANISHED
 }
 
 enum WhitelistInviteStatus {

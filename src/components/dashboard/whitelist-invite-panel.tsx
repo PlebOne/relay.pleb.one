@@ -17,6 +17,35 @@ export function WhitelistInvitePanel() {
   const [note, setNote] = useState("");
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  // Debounce npub for preview
+  const [debouncedNpub, setDebouncedNpub] = useState("");
+  
+  // Update debounced value after delay
+  const handleNpubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setNpub(val);
+    // Simple debounce
+    setTimeout(() => {
+      setDebouncedNpub(val);
+    }, 500);
+  };
+
+  const previewQuery = api.user.getProfilePreview.useQuery(
+    { npub: debouncedNpub },
+    { 
+      enabled: debouncedNpub.startsWith("npub1") && debouncedNpub.length > 10,
+      retry: false 
+    }
+  );
+
+  // Auto-fill display name if found and empty
+  useMemo(() => {
+    if (previewQuery.data && !displayName) {
+      const name = previewQuery.data.displayName || previewQuery.data.name;
+      if (name) setDisplayName(name);
+    }
+  }, [previewQuery.data, displayName]);
+
   const whitelistQuery = api.user.getWhitelistStatus.useQuery();
   const inviteMutation = api.user.inviteToWhitelist.useMutation({
     onSuccess: async () => {
@@ -100,8 +129,20 @@ export function WhitelistInvitePanel() {
                 className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
                 placeholder="npub1..."
                 value={npub}
-                onChange={(e) => setNpub(e.target.value)}
+                onChange={handleNpubChange}
               />
+              {previewQuery.isLoading && <p className="mt-1 text-xs text-gray-500">Looking up profile...</p>}
+              {previewQuery.data && (
+                <div className="mt-2 flex items-center gap-2 rounded border border-green-500/20 bg-green-900/10 p-2">
+                  {previewQuery.data.picture && (
+                    <img src={previewQuery.data.picture} alt="" className="h-8 w-8 rounded-full" />
+                  )}
+                  <div className="text-xs">
+                    <p className="font-bold text-green-400">{previewQuery.data.displayName || previewQuery.data.name}</p>
+                    <p className="text-gray-400">{previewQuery.data.nip05}</p>
+                  </div>
+                </div>
+              )}
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
                   <label className="block text-xs uppercase tracking-wide text-green-500/70">

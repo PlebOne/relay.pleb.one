@@ -5,9 +5,22 @@ import { type Metadata } from "next";
 import { TRPCReactProvider } from "@/trpc/providers";
 
 export const metadata: Metadata = {
-  title: "relay.pleb.one - Premium Nostr Relay",
-  description: "A premium paid Nostr relay with Blossom server integration",
+  title: "relay.pleb.one - Community Nostr Relay",
+  description: "A community Nostr relay with whitelist-gated access and rust-powered backend",
   icons: [{ rel: "icon", url: "/favicon.ico" }],
+  openGraph: {
+    title: "relay.pleb.one - Community Nostr Relay",
+    description: "A community Nostr relay with whitelist-gated access and rust-powered backend",
+    url: "https://relay.pleb.one",
+    siteName: "relay.pleb.one",
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "relay.pleb.one - Community Nostr Relay",
+    description: "A community Nostr relay with whitelist-gated access and rust-powered backend",
+  },
 };
 
 export default function RootLayout({
