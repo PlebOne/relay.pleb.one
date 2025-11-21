@@ -205,8 +205,30 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                                     handle_client_message(msg, &state, &mut subscriptions, &tx_internal, &challenge, &mut auth_pubkey).await;
                                                 }
                                                 Err(e) => {
-                                                    warn!("Invalid message: {} - {}", e, text);
-                                                    let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json())).await;
+                                                    // Attempt to fix malformed REQ from some clients (nostr-tools v2?)
+                                                    // Check if it's ["REQ", sub_id, [filters]]
+                                                    let mut handled = false;
+                                                    if msg_type == "REQ" && arr.len() == 3 {
+                                                        if let Some(filters_arr) = arr[2].as_array() {
+                                                            // Reconstruct the message
+                                                            let mut new_arr = Vec::new();
+                                                            new_arr.push(arr[0].clone());
+                                                            new_arr.push(arr[1].clone());
+                                                            for f in filters_arr {
+                                                                new_arr.push(f.clone());
+                                                            }
+                                                            let new_text = serde_json::to_string(&new_arr).unwrap_or_default();
+                                                            if let Ok(msg) = ClientMessage::from_json(&new_text) {
+                                                                handle_client_message(msg, &state, &mut subscriptions, &tx_internal, &challenge, &mut auth_pubkey).await;
+                                                                handled = true;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    if !handled {
+                                                        warn!("Invalid message: {} - {}", e, text);
+                                                        let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json())).await;
+                                                    }
                                                 }
                                             }
                                         }

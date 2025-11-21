@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import { getServerSession } from "next-auth";
 
 import { MatrixRain, GlowingButton, StatusIndicator } from "@/components/ui/cypherpunk";
-import { type ChatHistoryEntry } from "@/components/dashboard/chat-history-feed";
 import { DashboardTabs } from "@/components/dashboard/dashboard-tabs";
 import { authOptions } from "@/server/auth";
 import { db } from "@/server/db";
@@ -19,32 +18,18 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
-  const events = await db.event.findMany({
-    take: 150,
+  const totalEvents = await db.event.count();
+  
+  // Get unique publishers count
+  const uniquePublishers = await db.event.groupBy({
+    by: ['pubkey'],
+  }).then(res => res.length);
+
+  const latestEvent = await db.event.findFirst({
     orderBy: { createdAt: "desc" },
-    include: {
-      author: {
-        select: { npub: true },
-      },
-    },
   });
 
-  const totalEvents = await db.event.count();
-
-  type RelayEvent = (typeof events)[number];
-
-  const entries: ChatHistoryEntry[] = events.map((event: RelayEvent) => ({
-    id: event.id,
-    eventId: event.eventId,
-    pubkey: event.pubkey,
-    npub: event.author?.npub,
-    kind: event.kind,
-    content: event.content,
-    createdAt: event.createdAt,
-  }));
-
-  const uniquePublishers = new Set(entries.map((entry) => entry.pubkey)).size;
-  const latestTimestamp = entries[0]?.createdAt;
+  const latestTimestamp = latestEvent?.createdAt;
   const viewerLabel = session.user.isAdmin ? "admin" : "member";
 
   return (
@@ -86,7 +71,7 @@ export default async function DashboardPage() {
             </dl>
           </header>
 
-          <DashboardTabs session={session} entries={entries} />
+          <DashboardTabs session={session} />
         </div>
       </div>
     </main>

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { type Session } from "next-auth";
-import { ChatHistoryFeed, type ChatHistoryEntry } from "@/components/dashboard/chat-history-feed";
+import { LiveFeed } from "@/components/dashboard/live-feed";
 import { WhitelistInvitePanel } from "@/components/dashboard/whitelist-invite-panel";
 import { AdminWhitelistPanel } from "@/components/dashboard/admin-whitelist-panel";
 import { AdminMessageBoard } from "@/components/dashboard/admin-message-board";
@@ -12,13 +12,11 @@ import { GlowingButton } from "@/components/ui/cypherpunk";
 
 interface DashboardTabsProps {
   session: Session;
-  entries: ChatHistoryEntry[];
 }
 
-export function DashboardTabs({ session, entries }: DashboardTabsProps) {
+export function DashboardTabs({ session }: DashboardTabsProps) {
   const [activeTab, setActiveTab] = useState<"feed" | "invites" | "setup" | "nips" | "admin">("feed");
   const isAdmin = session.user.isAdmin;
-  const viewerLabel = isAdmin ? "admin" : "member";
 
   return (
     <div>
@@ -82,22 +80,22 @@ export function DashboardTabs({ session, entries }: DashboardTabsProps) {
       <div className="min-h-[500px] animate-in fade-in slide-in-from-bottom-4 duration-500">
         {activeTab === "feed" && (
           <section className="grid gap-6 lg:grid-cols-[2fr,1fr]">
-            <ChatHistoryFeed entries={entries} viewerLabel={viewerLabel} />
+            <LiveFeed />
 
             <aside className="space-y-6">
               <div className="rounded-2xl border border-green-500/30 bg-black/70 p-5 shadow-lg shadow-green-500/10">
-                <h2 className="text-lg font-semibold text-green-400">Feed notes</h2>
+                <h2 className="text-lg font-semibold text-green-400">Live Stream</h2>
                 <ul className="mt-3 space-y-2 text-sm text-gray-300">
-                  <li>• Stream includes every event observed by the relay.</li>
-                  <li>• Entries are ordered newest-first and update on refresh.</li>
-                  <li>• Admins will soon unlock moderation actions from this panel.</li>
+                  <li>• Real-time connection to relay WebSocket.</li>
+                  <li>• Showing Kind 1 (Text Notes).</li>
+                  <li>• Auto-fetching user profiles (Kind 0).</li>
                 </ul>
               </div>
 
               <div className="rounded-2xl border border-green-500/30 bg-black/70 p-5 shadow-lg shadow-green-500/10">
                 <h2 className="text-lg font-semibold text-green-400">Need deeper history?</h2>
                 <p className="mt-2 text-sm text-gray-300">
-                  Request a signed export from support or pull a CSV snapshot through the admin console. Automation hooks are coming next.
+                  Request a signed export from support or pull a CSV snapshot through the admin console.
                 </p>
                 <GlowingButton className="mt-4 w-full" variant="secondary">
                   Request export
