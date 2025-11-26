@@ -25,3 +25,4 @@ yarn-error.log*
 prisma/dev.db*
 *.sqlite
 tsconfig.tsbuildinfo
+relay-rs/target/

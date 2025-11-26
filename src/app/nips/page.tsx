@@ -49,6 +49,15 @@ const nipEntries = [
     reference: "https://github.com/nostr-protocol/nips/blob/master/23.md",
   },
   {
+    number: "33",
+    title: "Parameterized Replaceable Events",
+    summary:
+      "Defines addressable events (kinds 30000-39999) that can be replaced by the same author using pubkey+kind+d-tag as the unique identifier. Supports Kind 30404 for NostrFeedz news subscriptions.",
+    focus: "Event types",
+    status: "draft · optional",
+    reference: "https://github.com/nostr-protocol/nips/blob/master/33.md",
+  },
+  {
     number: "40",
     title: "Expiration Timestamp",
     summary:

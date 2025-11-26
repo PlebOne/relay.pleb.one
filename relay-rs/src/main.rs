@@ -18,7 +18,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, debug};
 use negentropy::{Bytes, Negentropy};
 
 #[derive(Clone)]
@@ -56,7 +56,7 @@ async fn main() {
                 Tag::parse(vec!["url", "wss://relay.pleb.one"]).unwrap(),
                 Tag::parse(vec!["software", "relay-rs"]).unwrap(),
                 Tag::parse(vec!["version", "0.1.0"]).unwrap(),
-                Tag::parse(vec!["supported_nips", "1", "9", "11", "15", "17", "20", "23", "40", "42", "51", "56", "62", "65", "66", "77", "86"]).unwrap(),
+                Tag::parse(vec!["supported_nips", "1", "9", "11", "15", "17", "20", "23", "33", "40", "42", "51", "56", "62", "65", "66", "77", "86"]).unwrap(),
             ];
 
             let event_builder = EventBuilder::new(
@@ -128,7 +128,7 @@ async fn handler(
             return Json(serde_json::json!({
                 "name": "Relay Pleb One",
                 "description": "A Rust-based Nostr Relay",
-                "supported_nips": [1, 9, 11, 15, 17, 20, 23, 40, 42, 51, 56, 62, 65, 66, 77, 86],
+                "supported_nips": [1, 9, 11, 15, 17, 20, 23, 33, 40, 42, 51, 56, 62, 65, 66, 77, 86],
                 "software": "relay-rs",
                 "version": "0.1.0"
             })).into_response();
@@ -226,8 +226,25 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                                     }
 
                                                     if !handled {
-                                                        warn!("Invalid message: {} - {}", e, text);
-                                                        let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json())).await;
+                                                        // Check if this is a prefix search (common pattern from Amethyst)
+                                                        if msg_type == "REQ" && arr.len() >= 3 {
+                                                            if let (Some(sub_id), Some(filter_obj)) = (arr[1].as_str(), arr[2].as_object()) {
+                                                                // Handle prefix search manually
+                                                                handle_prefix_search_req(
+                                                                    SubscriptionId::new(sub_id),
+                                                                    filter_obj.clone(),
+                                                                    &state,
+                                                                    &mut subscriptions,
+                                                                    &tx_internal
+                                                                ).await;
+                                                                handled = true;
+                                                            }
+                                                        }
+                                                        
+                                                        if !handled {
+                                                            warn!("Invalid message: {} - {}", e, text);
+                                                            let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json())).await;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -247,14 +264,21 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 }
             }
             Ok(event) = broadcast_rx.recv() => {
+                debug!("Broadcast received event {} (kind: {}), checking {} active subscriptions", event.id, event.kind, subscriptions.len());
                 // Check if event matches any subscription
+                let mut sent_to = Vec::new();
                 for (sub_id, filters) in &subscriptions {
                     for filter in filters {
                         if filter.match_event(&event) {
+                            debug!("Event {} matches subscription {}", event.id, sub_id);
                             let _ = tx_internal.send(Message::Text(RelayMessage::event(SubscriptionId::new(sub_id), event.clone()).as_json())).await;
+                            sent_to.push(sub_id.clone());
                             break; // Send only once per subscription
                         }
                     }
+                }
+                if !sent_to.is_empty() {
+                    info!("Broadcast event {} to {} subscriptions: {:?}", event.id, sent_to.len(), sent_to);
                 }
             }
         }
@@ -494,6 +518,8 @@ async fn handle_nip77_close(
 }
 
 async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync::mpsc::Sender<Message>) {
+    info!("Received EVENT from pubkey: {}, kind: {}", event.pubkey, event.kind);
+    
     // 1. Verify signature
     if let Err(e) = event.verify() {
         let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("Invalid signature: {}", e)).as_json())).await;
@@ -545,7 +571,34 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
         return;
     }
 
-    // 3. Save to DB
+    // 3. Handle addressable/replaceable events (NIP-33: kinds 30000-39999)
+    let kind_num = event.kind.as_u64();
+    if kind_num >= 30000 && kind_num < 40000 {
+        // Extract d-tag for addressable events
+        let d_tag = event.tags.iter()
+            .find(|t| {
+                let v = t.as_vec();
+                v.len() >= 1 && v[0] == "d"
+            })
+            .map(|t| t.as_vec().get(1).cloned().unwrap_or_default())
+            .unwrap_or_default();
+        
+        // Delete older events with same pubkey + kind + d-tag
+        let _ = sqlx::query(
+            "DELETE FROM events WHERE pubkey = $1 AND kind = $2 AND 
+             EXISTS (SELECT 1 FROM jsonb_array_elements(tags) AS t 
+                     WHERE t->>0 = 'd' AND (t->>1 = $3 OR ($3 = '' AND (t->>1 IS NULL OR t->>1 = ''))))"
+        )
+        .bind(event.pubkey.to_string())
+        .bind(kind_num as i32)
+        .bind(&d_tag)
+        .execute(&state.db)
+        .await;
+        
+        info!("Addressable event kind {} with d-tag '{}' - replaced previous version", kind_num, d_tag);
+    }
+
+    // 4. Save to DB
     let tags_json = serde_json::to_value(&event.tags).unwrap_or(serde_json::Value::Null);
     let created_at = chrono::DateTime::from_timestamp(event.created_at.as_u64() as i64, 0)
         .unwrap_or_default()
@@ -624,17 +677,65 @@ async fn handle_req(
     subscriptions: &mut HashMap<String, Vec<Filter>>,
     sender: &tokio::sync::mpsc::Sender<Message>,
 ) {
+    info!("Received REQ sub_id: {}, filters: {:?}", sub_id, filters);
     subscriptions.insert(sub_id.to_string(), filters.clone());
 
-    // Simplified: Just fetch last 100 events
-    let rows = sqlx::query(
-        "SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE \"expiresAt\" IS NULL OR \"expiresAt\" > NOW() ORDER BY \"createdAt\" DESC LIMIT 100"
-    )
+    // Build SQL query based on filters
+    let mut sql = String::from("SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())");
+    let mut params: Vec<String> = Vec::new();
+    let mut param_count = 1;
+    
+    // Take the first filter (most clients send one filter per REQ)
+    if let Some(filter) = filters.first() {
+        // Filter by kinds
+        if let Some(kinds) = &filter.kinds {
+            let kind_list: Vec<String> = kinds.iter().map(|k| k.as_u64().to_string()).collect();
+            if !kind_list.is_empty() {
+                sql.push_str(&format!(" AND kind IN ({})", kind_list.join(",")));
+            }
+        }
+        
+        // Filter by authors
+        if let Some(authors) = &filter.authors {
+            if !authors.is_empty() {
+                let author_list: Vec<String> = authors.iter().map(|a| format!("'{}'", a)).collect();
+                sql.push_str(&format!(" AND pubkey IN ({})", author_list.join(",")));
+            }
+        }
+        
+        // Filter by since
+        if let Some(since) = filter.since {
+            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since.as_u64()));
+        }
+        
+        // Filter by until
+        if let Some(until) = filter.until {
+            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until.as_u64()));
+        }
+    }
+    
+    // Order and limit
+    sql.push_str(" ORDER BY \"createdAt\" DESC");
+    if let Some(filter) = filters.first() {
+        if let Some(limit) = filter.limit {
+            sql.push_str(&format!(" LIMIT {}", limit.min(500))); // Cap at 500
+        } else {
+            sql.push_str(" LIMIT 100");
+        }
+    } else {
+        sql.push_str(" LIMIT 100");
+    }
+    
+    debug!("Executing query: {}", sql);
+    
+    let rows = sqlx::query(&sql)
     .fetch_all(&state.db)
     .await;
 
     match rows {
         Ok(rows) => {
+            info!("handle_req: Found {} events in DB for sub_id: {}", rows.len(), sub_id);
+            let mut sent_count = 0;
             for row in rows {
                 let event_id: String = row.get("eventId");
                 let pubkey: String = row.get("pubkey");
@@ -668,10 +769,13 @@ async fn handle_req(
                     }
                     
                     if matched {
+                        sent_count += 1;
+                        info!("handle_req: Sending event {} (kind: {}) to sub_id: {}", event_id, kind, sub_id);
                         let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json())).await;
                     }
                 }
             }
+            info!("handle_req: Sent {} matching events for sub_id: {}, sending EOSE", sent_count, sub_id);
             let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json())).await;
         }
         Err(e) => {
@@ -680,3 +784,114 @@ async fn handle_req(
         }
     }
 }
+
+// Handle REQ with prefix searches (short author pubkeys)
+async fn handle_prefix_search_req(
+    sub_id: SubscriptionId,
+    filter: serde_json::Map<String, serde_json::Value>,
+    state: &Arc<AppState>,
+    subscriptions: &mut HashMap<String, Vec<Filter>>,
+    sender: &tokio::sync::mpsc::Sender<Message>,
+) {
+    info!("Received REQ with potential prefix search, sub_id: {}", sub_id);
+    
+    // Extract filter components
+    let kinds: Vec<i32> = filter.get("kinds")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect())
+        .unwrap_or_default();
+    
+    let authors: Vec<String> = filter.get("authors")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    
+    let since = filter.get("since").and_then(|v| v.as_i64());
+    let until = filter.get("until").and_then(|v| v.as_i64());
+    let limit = filter.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
+    
+    // Build SQL query with prefix support
+    let mut query = String::from(
+        "SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())"
+    );
+    
+    // Add kinds filter
+    if !kinds.is_empty() {
+        let kinds_str = kinds.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",");
+        query.push_str(&format!(" AND kind IN ({})", kinds_str));
+    }
+    
+    // Add authors filter with prefix support
+    if !authors.is_empty() {
+        query.push_str(" AND (");
+        let author_conditions: Vec<String> = authors.iter().map(|author| {
+            if author.len() == 64 {
+                // Full pubkey - exact match
+                format!("pubkey = '{}'", author)
+            } else {
+                // Prefix - use LIKE
+                format!("pubkey LIKE '{}%'", author)
+            }
+        }).collect();
+        query.push_str(&author_conditions.join(" OR "));
+        query.push_str(")");
+    }
+    
+    // Add time filters
+    if let Some(since_ts) = since {
+        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since_ts));
+    }
+    if let Some(until_ts) = until {
+        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until_ts));
+    }
+    
+    query.push_str(&format!(" ORDER BY \"createdAt\" DESC LIMIT {}", limit));
+    
+    debug!("Prefix search query: {}", query);
+    
+    // Execute query
+    let rows = sqlx::query(&query).fetch_all(&state.db).await;
+    
+    match rows {
+        Ok(rows) => {
+            info!("Found {} events for prefix search sub_id: {}", rows.len(), sub_id);
+            let mut sent_count = 0;
+            
+            for row in rows {
+                let event_id: String = row.get("eventId");
+                let pubkey: String = row.get("pubkey");
+                let kind: i32 = row.get("kind");
+                let content: String = row.get("content");
+                let tags_val: serde_json::Value = row.get("tags");
+                let sig: String = row.get("sig");
+                let created_at: chrono::NaiveDateTime = row.get("createdAt");
+                let created_at_utc = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(created_at, chrono::Utc);
+
+                let tags: Vec<Tag> = serde_json::from_value(tags_val).unwrap_or_default();
+                
+                let event_json = serde_json::json!({
+                    "id": event_id,
+                    "pubkey": pubkey,
+                    "created_at": created_at_utc.timestamp(),
+                    "kind": kind,
+                    "tags": tags,
+                    "content": content,
+                    "sig": sig
+                });
+                
+                if let Ok(event) = Event::from_json(&event_json.to_string()) {
+                    sent_count += 1;
+                    let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json())).await;
+                }
+            }
+            
+            info!("Sent {} events for prefix search sub_id: {}, sending EOSE", sent_count, sub_id);
+            let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json())).await;
+        }
+        Err(e) => {
+            error!("Prefix search query failed: {}", e);
+            let _ = sender.send(Message::Text(RelayMessage::notice(format!("Query error: {}", e)).as_json())).await;
+        }
+    }
+}
+
