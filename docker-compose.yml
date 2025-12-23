@@ -68,12 +68,15 @@ services:
     container_name: relay-server
     environment:
       - DATABASE_URL=postgresql://relay_user:${DB_PASSWORD}@postgres:5432/relay_pleb_one
+      - REDIS_URL=redis://redis:6379
       - RELAY_PORT=3001
       - RUST_LOG=info,relay_rs=debug
     ports:
       - "3001:3001"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -91,6 +94,9 @@ services:
     depends_on:
       - app
     restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       - RELAY_DOMAIN=${RELAY_DOMAIN:-relay.pleb.one}
 

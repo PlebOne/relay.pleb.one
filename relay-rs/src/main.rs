@@ -20,11 +20,21 @@ use std::{
 use tokio::sync::broadcast;
 use tracing::{error, info, warn, debug};
 use negentropy::{Bytes, Negentropy};
+use deadpool_redis::{Pool as RedisPool, Config as RedisConfig, Runtime};
+use redis::AsyncCommands;
+use tower_http::compression::CompressionLayer;
+
+// Cache TTL constants
+const CACHE_TTL_WHITELIST: u64 = 300; // 5 minutes for whitelist lookups
+const CACHE_TTL_RECENT_EVENTS: u64 = 60; // 1 minute for recent events
+const RECENT_EVENTS_KEY: &str = "relay:recent_events";
+const MAX_CACHED_EVENTS: i64 = 1000;
 
 #[derive(Clone)]
 struct AppState {
     db: Pool<Postgres>,
     tx: broadcast::Sender<Event>,
+    redis: Option<RedisPool>,
 }
 
 #[tokio::main]
@@ -38,9 +48,22 @@ async fn main() {
         .await
         .expect("Failed to connect to database");
 
-    let (tx, _rx) = broadcast::channel(100);
+    // Initialize Redis connection pool
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
+    let redis_pool = match RedisConfig::from_url(&redis_url).create_pool(Some(Runtime::Tokio1)) {
+        Ok(pool) => {
+            info!("Redis connection pool initialized: {}", redis_url);
+            Some(pool)
+        }
+        Err(e) => {
+            warn!("Failed to create Redis pool, caching disabled: {}", e);
+            None
+        }
+    };
 
-    let state = Arc::new(AppState { db: pool, tx });
+    let (tx, _rx) = broadcast::channel(1000); // Increased buffer size
+
+    let state = Arc::new(AppState { db: pool, tx, redis: redis_pool });
 
     // NIP-66: Relay Monitor Task
     let monitor_state = state.clone();
@@ -104,6 +127,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(handler))
+        .layer(CompressionLayer::new()) // Enable gzip/br/deflate compression for HTTP responses
         .with_state(state);
 
     let port = std::env::var("RELAY_PORT").unwrap_or_else(|_| "3001".to_string());
@@ -517,6 +541,120 @@ async fn handle_nip77_close(
     sessions.remove(sub_id);
 }
 
+// ============ Redis Cache Helpers ============
+
+/// Check if a user is whitelisted (with Redis caching)
+async fn check_whitelist_cached(state: &Arc<AppState>, pubkey: &str) -> (bool, bool) {
+    let cache_key = format!("whitelist:{}", pubkey);
+    
+    // Try Redis cache first
+    if let Some(ref redis_pool) = state.redis {
+        if let Ok(mut conn) = redis_pool.get().await {
+            if let Ok(cached) = conn.get::<_, Option<String>>(&cache_key).await {
+                if let Some(val) = cached {
+                    let parts: Vec<&str> = val.split(':').collect();
+                    if parts.len() == 2 {
+                        let is_admin = parts[0] == "1";
+                        let is_active = parts[1] == "1";
+                        debug!("Whitelist cache HIT for {}: admin={}, active={}", pubkey, is_admin, is_active);
+                        return (is_admin, is_active);
+                    }
+                }
+            }
+        }
+    }
+    
+    // Cache miss - query DB
+    let row = sqlx::query(
+        "SELECT \"isAdmin\", \"whitelistStatus\"::text as status FROM users WHERE pubkey = $1"
+    )
+    .bind(pubkey)
+    .fetch_optional(&state.db)
+    .await;
+
+    let (is_admin, is_active) = match row {
+        Ok(Some(row)) => {
+            let admin: bool = row.try_get("isAdmin").unwrap_or(false);
+            let status: Option<String> = row.try_get("status").unwrap_or(None);
+            (admin, status == Some("ACTIVE".to_string()))
+        }
+        _ => (false, false),
+    };
+
+    // Store in Redis cache
+    if let Some(ref redis_pool) = state.redis {
+        if let Ok(mut conn) = redis_pool.get().await {
+            let cache_val = format!("{}:{}", if is_admin { "1" } else { "0" }, if is_active { "1" } else { "0" });
+            let _: Result<(), _> = conn.set_ex(&cache_key, &cache_val, CACHE_TTL_WHITELIST).await;
+            debug!("Whitelist cache SET for {}: {}", pubkey, cache_val);
+        }
+    }
+
+    (is_admin, is_active)
+}
+
+/// Cache an event in Redis sorted set (by timestamp)
+async fn cache_event(state: &Arc<AppState>, event: &Event) {
+    if let Some(ref redis_pool) = state.redis {
+        if let Ok(mut conn) = redis_pool.get().await {
+            let event_json = event.as_json();
+            let score = event.created_at.as_u64() as f64;
+            
+            // Add to sorted set
+            let _: Result<(), _> = conn.zadd(RECENT_EVENTS_KEY, &event_json, score).await;
+            
+            // Trim to keep only the most recent events (keep last MAX_CACHED_EVENTS)
+            let trim_index: isize = -(MAX_CACHED_EVENTS as isize + 1);
+            let _: Result<(), _> = conn.zremrangebyrank(RECENT_EVENTS_KEY, 0, trim_index).await;
+            
+            // Also cache by event ID for quick lookups
+            let event_key = format!("event:{}", event.id);
+            let _: Result<(), _> = conn.set_ex(&event_key, &event_json, CACHE_TTL_RECENT_EVENTS * 10).await;
+        }
+    }
+}
+
+/// Get recent events from cache matching a filter
+async fn get_cached_events(state: &Arc<AppState>, filter: &Filter, limit: usize) -> Vec<Event> {
+    let mut events = Vec::new();
+    
+    if let Some(ref redis_pool) = state.redis {
+        if let Ok(mut conn) = redis_pool.get().await {
+            // Get events from sorted set (most recent first) using zrevrange
+            let result: Result<Vec<String>, _> = redis::cmd("ZREVRANGE")
+                .arg(RECENT_EVENTS_KEY)
+                .arg(0)
+                .arg(limit as isize - 1)
+                .query_async(&mut conn)
+                .await;
+            
+            if let Ok(cached_events) = result {
+                for event_json in cached_events {
+                    if let Ok(event) = Event::from_json(&event_json) {
+                        if filter.match_event(&event) {
+                            events.push(event);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    events
+}
+
+/// Invalidate whitelist cache for a user
+async fn invalidate_whitelist_cache(state: &Arc<AppState>, pubkey: &str) {
+    if let Some(ref redis_pool) = state.redis {
+        if let Ok(mut conn) = redis_pool.get().await {
+            let cache_key = format!("whitelist:{}", pubkey);
+            let _: Result<(), _> = conn.del(&cache_key).await;
+        }
+    }
+}
+
+// ============ End Cache Helpers ============
+
 async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync::mpsc::Sender<Message>) {
     info!("Received EVENT from pubkey: {}, kind: {}", event.pubkey, event.kind);
     
@@ -542,31 +680,11 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
         }
     }
 
-    // 2. Check whitelist (User table)
+    // 2. Check whitelist (with Redis caching)
     let pubkey_hex = event.pubkey.to_string();
+    let (is_admin, is_active) = check_whitelist_cached(state, &pubkey_hex).await;
     
-    // Use sqlx::query instead of macro to avoid compile-time DB check
-    let row = sqlx::query(
-        "SELECT \"isAdmin\", \"whitelistStatus\"::text as status FROM users WHERE pubkey = $1"
-    )
-    .bind(&pubkey_hex)
-    .fetch_optional(&state.db)
-    .await;
-
-    let authorized = match row {
-        Ok(Some(row)) => {
-            let is_admin: bool = row.try_get("isAdmin").unwrap_or(false);
-            let status: Option<String> = row.try_get("status").unwrap_or(None);
-            is_admin || status == Some("ACTIVE".to_string())
-        }
-        Ok(None) => false,
-        Err(e) => {
-            error!("Database error: {}", e);
-            false
-        }
-    };
-
-    if !authorized {
+    if !is_admin && !is_active {
         let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "blocked: user not whitelisted".to_string()).as_json())).await;
         return;
     }
@@ -658,7 +776,13 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
                     .bind(&pubkey)
                     .execute(&state.db)
                     .await;
+                
+                // Invalidate whitelist cache for vanished user
+                invalidate_whitelist_cache(state, &pubkey).await;
             }
+
+            // Cache the event in Redis
+            cache_event(state, &event).await;
 
             // Broadcast
             let _ = state.tx.send(event);

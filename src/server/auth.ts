@@ -7,7 +7,8 @@ import {
 import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
-import { nip19, verifyEvent } from "nostr-tools";
+import { nip19 } from "nostr-tools";
+import { verifyEvent } from "nostr-tools/pure";
 import { env } from "@/env";
 import { db } from "@/server/db";
 
@@ -26,7 +27,7 @@ declare module "next-auth" {
       npub?: string;
       pubkey?: string;
       isAdmin: boolean;
-      whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
+      whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED" | "VANISHED";
       inviteQuota: number;
       invitesUsed: number;
       invitePrivilegesSuspended: boolean;
@@ -38,7 +39,7 @@ declare module "next-auth" {
     npub?: string;
     pubkey?: string;
     isAdmin: boolean;
-    whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED";
+    whitelistStatus: "PENDING" | "ACTIVE" | "PAUSED" | "REVOKED" | "VANISHED";
     inviteQuota: number;
     invitesUsed: number;
     invitePrivilegesSuspended: boolean;

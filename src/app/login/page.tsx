@@ -5,27 +5,18 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import "@/types/nostr.d";
 
 const AUTH_KIND = 22242;
 
+// Type for the auth event before signing
 type NostrAuthEvent = {
   kind: number;
   created_at: number;
   tags: string[][];
   content: string;
   pubkey: string;
-  id?: string;
-  sig?: string;
 };
-
-declare global {
-  interface Window {
-    nostr?: {
-      getPublicKey: () => Promise<string>;
-      signEvent: (event: NostrAuthEvent) => Promise<NostrAuthEvent>;
-    };
-  }
-}
 
 export default function LoginPage() {
   const router = useRouter();

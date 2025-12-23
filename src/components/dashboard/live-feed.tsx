@@ -5,6 +5,13 @@ import { SimplePool, type Event } from "nostr-tools";
 import { TerminalWindow } from "@/components/ui/cypherpunk";
 
 const RELAY_URL = process.env.NEXT_PUBLIC_RELAY_URL || "wss://relay.pleb.one";
+const METADATA_RELAYS = [
+  RELAY_URL,
+  "wss://purplepag.es",
+  "wss://relay.damus.io",
+  "wss://nos.lol",
+  "wss://relay.primal.net",
+];
 
 type UserMetadata = {
   name?: string;
@@ -63,19 +70,22 @@ export function LiveFeed() {
 
     const connect = async () => {
       try {
-        // Subscribe to recent events
+        // Subscribe to recent events and live updates
         const sub = pool.subscribeMany(
           [RELAY_URL],
-          [
-            {
-              kinds: [1], // Text notes
-              limit: 50,
-            },
-          ],
+          {
+            kinds: [1], // Text notes
+            limit: 50,
+          },
           {
             onevent(event) {
-              if (processedEvents.current.has(event.id)) return;
+              console.log("[LiveFeed] Received event:", event.id, "kind:", event.kind, "from:", event.pubkey.substring(0, 8));
+              if (processedEvents.current.has(event.id)) {
+                console.log("[LiveFeed] Duplicate event, skipping:", event.id);
+                return;
+              }
               processedEvents.current.add(event.id);
+              console.log("[LiveFeed] Adding new event to feed:", event.id);
 
               setEvents((prev) => {
                 const newEvents = [event, ...prev].sort((a, b) => b.created_at - a.created_at);
@@ -88,6 +98,7 @@ export function LiveFeed() {
               }
             },
             oneose() {
+              console.log("[LiveFeed] EOSE received from relay");
               setStatus("connected");
             },
           }
@@ -114,7 +125,7 @@ export function LiveFeed() {
 
   const fetchMetadata = async (pool: SimplePool, pubkey: string) => {
     // Debounce or batch could be better, but simple for now
-    const event = await pool.get([RELAY_URL], {
+    const event = await pool.get(METADATA_RELAYS, {
       kinds: [0],
       authors: [pubkey],
     });

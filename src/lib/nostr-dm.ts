@@ -1,6 +1,7 @@
 import "server-only";
 
-import { SimplePool, finalizeEvent, getPublicKey, nip04, nip19 } from "nostr-tools";
+import { SimplePool, nip04, nip19 } from "nostr-tools";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
 
 import { env } from "@/env";
 import { DEFAULT_RELAYS } from "@/lib/nostr";

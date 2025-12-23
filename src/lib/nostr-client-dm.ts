@@ -1,19 +1,7 @@
 "use client";
 
 import { nip04, finalizeEvent, type EventTemplate } from "nostr-tools";
-
-declare global {
-  interface Window {
-    nostr?: {
-      getPublicKey(): Promise<string>;
-      signEvent(event: EventTemplate): Promise<{ id: string; pubkey: string; sig: string; kind: number; tags: string[][]; content: string; created_at: number }>;
-      nip04?: {
-        encrypt(pubkey: string, plaintext: string): Promise<string>;
-        decrypt(pubkey: string, ciphertext: string): Promise<string>;
-      };
-    };
-  }
-}
+import "@/types/nostr.d";
 
 export type DmSendResult =
   | { success: true; eventId: string }

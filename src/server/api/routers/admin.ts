@@ -5,7 +5,7 @@ import { nip19 } from "nostr-tools";
 import { adminProcedure, createTRPCRouter } from "@/server/api/trpc";
 import { fetchProfileMetadata } from "@/lib/nostr";
 
-const whitelistStatusEnum = z.enum(["PENDING", "ACTIVE", "PAUSED", "REVOKED"]);
+const whitelistStatusEnum = z.enum(["PENDING", "ACTIVE", "PAUSED", "REVOKED", "VANISHED"]);
 
 const decodeNpub = (npub: string) => {
   const decoded = nip19.decode(npub.trim());

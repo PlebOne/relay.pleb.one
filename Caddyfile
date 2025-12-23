@@ -2,17 +2,30 @@
 # Automatic HTTPS with Let's Encrypt
 
 {$RELAY_DOMAIN:relay.pleb.one} {
-    # WebSocket for Nostr relay (Match Upgrade header)
+    # WebSocket for Nostr relay - Must be first to catch all WS connections
     @websocket {
         header Connection *Upgrade*
         header Upgrade websocket
     }
     handle @websocket {
-        reverse_proxy relay:3001
+        reverse_proxy relay:3001 {
+            # WebSocket specific settings
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+            
+            # Force HTTP/1.1 for WebSocket connections
+            transport http {
+                versions 1.1
+                read_timeout 3600s
+                write_timeout 3600s
+            }
+        }
     }
 
-    # NIP-11 Relay Information Document
+    # NIP-11 Relay Information Document (root path with specific Accept header)
     @nip11 {
+        path /
         header Accept application/nostr+json
     }
     handle @nip11 {

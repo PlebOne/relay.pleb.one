@@ -1,4 +1,4 @@
-import { SimplePool } from "nostr-tools";
+import { SimplePool } from "nostr-tools/pool";
 
 export const DEFAULT_RELAYS = [
   "wss://relay.damus.io",
