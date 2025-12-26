@@ -5,18 +5,10 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
-import "@/types/nostr.d";
+
+// NIP-07 types are declared globally in src/types/nostr.d.ts
 
 const AUTH_KIND = 22242;
-
-// Type for the auth event before signing
-type NostrAuthEvent = {
-  kind: number;
-  created_at: number;
-  tags: string[][];
-  content: string;
-  pubkey: string;
-};
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,8 +37,15 @@ export default function LoginPage() {
       }
 
       try {
+        // Get pubkey first to ensure extension is available
         const pubkey = await window.nostr.getPublicKey();
-        const authEvent: NostrAuthEvent = {
+        if (!pubkey || typeof pubkey !== "string" || pubkey.length !== 64) {
+          setNip07Error("Invalid public key from extension");
+          return;
+        }
+
+        // Create an unsigned event template (without id, sig, or pubkey - signer adds these)
+        const eventTemplate = {
           kind: AUTH_KIND,
           created_at: Math.floor(Date.now() / 1000),
           tags: [
@@ -55,12 +54,25 @@ export default function LoginPage() {
             ["challenge", crypto.randomUUID()],
           ],
           content: "Login request for relay.pleb.one",
-          pubkey,
         };
 
-        const signedEvent = await window.nostr.signEvent(authEvent);
+        // Sign the event - this returns a complete signed event with id, pubkey, and sig
+        const signedEvent = await window.nostr.signEvent(eventTemplate);
+        
+        // Validate the signed event has required fields
+        if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
+          setNip07Error("Extension returned invalid signed event");
+          return;
+        }
+
+        // Verify the pubkey matches what we requested
+        if (signedEvent.pubkey !== pubkey) {
+          setNip07Error("Signed event pubkey mismatch");
+          return;
+        }
+
         const result = await signIn("nip07", {
-          pubkey,
+          pubkey: signedEvent.pubkey,
           event: JSON.stringify(signedEvent),
           redirect: false,
         });
@@ -73,8 +85,12 @@ export default function LoginPage() {
         setMessage("Authenticated via NIP-07");
         router.push("/dashboard");
       } catch (error) {
-        console.error(error);
-        setNip07Error("Failed to authenticate with NIP-07");
+        console.error("NIP-07 login error:", error);
+        if (error instanceof Error) {
+          setNip07Error(`Failed to authenticate: ${error.message}`);
+        } else {
+          setNip07Error("Failed to authenticate with NIP-07");
+        }
       }
     });
   };

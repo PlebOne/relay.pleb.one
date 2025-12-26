@@ -8,11 +8,12 @@ import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { nip19 } from "nostr-tools";
-import { verifyEvent } from "nostr-tools/pure";
+import { verifyEvent, type Event } from "nostr-tools/pure";
 import { env } from "@/env";
 import { db } from "@/server/db";
 
-const MAX_EVENT_AGE_SECONDS = 60 * 5;
+// Increased to 10 minutes to account for clock drift between client and server
+const MAX_EVENT_AGE_SECONDS = 60 * 10;
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -96,27 +97,71 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         if (!credentials?.pubkey || !credentials?.event) {
+          console.error("NIP-07 auth: Missing pubkey or event");
           return null;
         }
 
         try {
-          const authEvent = JSON.parse(credentials.event);
+          let authEvent: Event;
+          try {
+            authEvent = JSON.parse(credentials.event) as Event;
+          } catch (parseError) {
+            console.error("NIP-07 auth: Failed to parse event JSON", parseError);
+            return null;
+          }
+
+          // Validate event has all required fields
+          if (!authEvent.id || !authEvent.sig || !authEvent.pubkey || 
+              !authEvent.kind || authEvent.created_at === undefined) {
+            console.error("NIP-07 auth: Event missing required fields", {
+              hasId: !!authEvent.id,
+              hasSig: !!authEvent.sig,
+              hasPubkey: !!authEvent.pubkey,
+              hasKind: !!authEvent.kind,
+              hasCreatedAt: authEvent.created_at !== undefined,
+            });
+            return null;
+          }
 
           if (authEvent.kind !== 22242) {
+            console.error("NIP-07 auth: Invalid event kind", authEvent.kind);
             return null;
           }
 
           if (authEvent.pubkey !== credentials.pubkey) {
+            console.error("NIP-07 auth: Pubkey mismatch", {
+              eventPubkey: authEvent.pubkey,
+              credentialsPubkey: credentials.pubkey,
+            });
             return null;
           }
 
           const timestamp = Math.floor(Date.now() / 1000);
-          if (Math.abs(timestamp - authEvent.created_at) > MAX_EVENT_AGE_SECONDS) {
+          const eventAge = Math.abs(timestamp - authEvent.created_at);
+          if (eventAge > MAX_EVENT_AGE_SECONDS) {
+            console.error("NIP-07 auth: Event too old or from the future", {
+              serverTime: timestamp,
+              eventTime: authEvent.created_at,
+              ageDiff: eventAge,
+              maxAge: MAX_EVENT_AGE_SECONDS,
+            });
             return null;
           }
 
-          const isValid = verifyEvent(authEvent);
+          // Verify the cryptographic signature
+          let isValid: boolean;
+          try {
+            isValid = verifyEvent(authEvent);
+          } catch (verifyError) {
+            console.error("NIP-07 auth: Signature verification threw error", verifyError);
+            return null;
+          }
+
           if (!isValid) {
+            console.error("NIP-07 auth: Invalid event signature", {
+              eventId: authEvent.id,
+              pubkey: authEvent.pubkey,
+            });
             return null;
           }
 

@@ -1,7 +1,8 @@
 "use client";
 
 import { nip04, finalizeEvent, type EventTemplate } from "nostr-tools";
-import "@/types/nostr.d";
+
+// NIP-07 types are declared globally in src/types/nostr.d.ts
 
 export type DmSendResult =
   | { success: true; eventId: string }
