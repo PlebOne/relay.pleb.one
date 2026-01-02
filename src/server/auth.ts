@@ -8,7 +8,7 @@ import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { nip19 } from "nostr-tools";
-import { verifyEvent, type Event } from "nostr-tools/pure";
+import { verifyEvent, getPublicKey, type Event } from "nostr-tools/pure";
 import { env } from "@/env";
 import { db } from "@/server/db";
 
@@ -262,13 +262,8 @@ export const authOptions: NextAuthOptions = {
           }
 
           const privateKey = decoded.data;
-          const pubkeyBytes = typeof privateKey === "string" 
-            ? Buffer.from(privateKey, "hex")
-            : privateKey;
-          
-          // Import getPublicKey from nostr-tools to derive public key
-          const { getPublicKey } = await import("nostr-tools");
-          const pubkey = getPublicKey(pubkeyBytes);
+          // privateKey from nip19.decode is already a Uint8Array
+          const pubkey = getPublicKey(privateKey);
 
           let user = await db.user.findUnique({
             where: { pubkey },
@@ -329,8 +324,11 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
 
-          const { getPublicKey } = await import("nostr-tools");
-          const pubkey = getPublicKey(Buffer.from(privateKey, "hex"));
+          // Convert hex string to Uint8Array for getPublicKey
+          const privateKeyBytes = new Uint8Array(
+            privateKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
+          );
+          const pubkey = getPublicKey(privateKeyBytes);
 
           let user = await db.user.findUnique({
             where: { pubkey },
