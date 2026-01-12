@@ -83,12 +83,12 @@ export default function LoginPage() {
         }
 
         if (result.error) {
-          setNip07Error(result.error);
+          setNip07Error(result.error === "undefined" ? "Authentication failed. Please try again." : result.error);
           return;
         }
 
         if (!result.ok) {
-          setNip07Error("Authentication failed");
+          setNip07Error("Authentication failed. Please ensure you have an active account.");
           return;
         }
 

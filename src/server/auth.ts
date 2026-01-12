@@ -60,9 +60,10 @@ export const authOptions: NextAuthOptions = {
     signIn: "/login",
     error: "/login",
   },
+  secret: env.NEXTAUTH_SECRET,
   debug: process.env.NODE_ENV === "development",
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id;
         token.npub = user.npub;
@@ -193,7 +194,7 @@ export const authOptions: NextAuthOptions = {
           }
 
           return {
-            id: user.id,
+            id: String(user.id),
             pubkey: user.pubkey,
             npub: user.npub,
             isAdmin: user.isAdmin,
@@ -236,7 +237,7 @@ export const authOptions: NextAuthOptions = {
         }
 
         return {
-          id: user.id,
+          id: String(user.id),
           pubkey: user.pubkey,
           npub: user.npub,
           isAdmin: user.isAdmin,
@@ -293,7 +294,7 @@ export const authOptions: NextAuthOptions = {
           }
 
           return {
-            id: user.id,
+            id: String(user.id),
             pubkey: user.pubkey,
             npub: user.npub,
             isAdmin: user.isAdmin,
@@ -358,7 +359,7 @@ export const authOptions: NextAuthOptions = {
           }
 
           return {
-            id: user.id,
+            id: String(user.id),
             pubkey: user.pubkey,
             npub: user.npub,
             isAdmin: user.isAdmin,
