@@ -4,7 +4,6 @@ import {
   type DefaultSession,
   type NextAuthOptions,
 } from "next-auth";
-import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { nip19 } from "nostr-tools";
@@ -57,6 +56,11 @@ export const authOptions: NextAuthOptions = {
   session: {
     strategy: "jwt",
   },
+  pages: {
+    signIn: "/login",
+    error: "/login",
+  },
+  debug: process.env.NODE_ENV === "development",
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
@@ -86,7 +90,6 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   },
-  adapter: PrismaAdapter(db),
   providers: [
     CredentialsProvider({
       id: "nip07",

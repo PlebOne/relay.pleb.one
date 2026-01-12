@@ -77,8 +77,18 @@ export default function LoginPage() {
           redirect: false,
         });
 
-        if (result?.error) {
+        if (!result) {
+          setNip07Error("Authentication failed - no response from server");
+          return;
+        }
+
+        if (result.error) {
           setNip07Error(result.error);
+          return;
+        }
+
+        if (!result.ok) {
+          setNip07Error("Authentication failed");
           return;
         }
 
