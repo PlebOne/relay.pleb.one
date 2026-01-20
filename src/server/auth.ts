@@ -7,12 +7,9 @@ import {
 import CredentialsProvider from "next-auth/providers/credentials";
 import { compare } from "bcryptjs";
 import { nip19 } from "nostr-tools";
-import { verifyEvent, getPublicKey, type Event } from "nostr-tools/pure";
+import { verifyEvent, getPublicKey, getEventHash, type Event } from "nostr-tools/pure";
 import { env } from "@/env";
 import { db } from "@/server/db";
-
-// Increased to 10 minutes to account for clock drift between client and server
-const MAX_EVENT_AGE_SECONDS = 60 * 10;
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -140,14 +137,32 @@ export const authOptions: NextAuthOptions = {
             return null;
           }
 
+          // Verify timestamp (allow 15 minutes for clock drift - more lenient)
           const timestamp = Math.floor(Date.now() / 1000);
           const eventAge = Math.abs(timestamp - authEvent.created_at);
-          if (eventAge > MAX_EVENT_AGE_SECONDS) {
-            console.error("NIP-07 auth: Event too old or from the future", {
+          if (eventAge > 900) { // 15 minutes
+            console.error("NIP-07 auth: Event timestamp outside acceptable range", {
               serverTime: timestamp,
               eventTime: authEvent.created_at,
               ageDiff: eventAge,
-              maxAge: MAX_EVENT_AGE_SECONDS,
+              maxAge: 900,
+            });
+            return null;
+          }
+
+          // Recompute event ID to ensure integrity
+          let recomputedId: string;
+          try {
+            recomputedId = getEventHash(authEvent);
+          } catch (hashError) {
+            console.error("NIP-07 auth: Failed to compute event hash", hashError);
+            return null;
+          }
+
+          if (recomputedId !== authEvent.id) {
+            console.error("NIP-07 auth: Event ID mismatch (possible tampering)", {
+              providedId: authEvent.id,
+              computedId: recomputedId,
             });
             return null;
           }

@@ -26,80 +26,128 @@ export default function LoginPage() {
   const [isNsecPending, startNsecAuth] = useTransition();
   const [isHexKeyPending, startHexKeyAuth] = useTransition();
 
+  const waitForExtension = async (maxAttempts = 10, delayMs = 100): Promise<boolean> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      if (typeof window !== "undefined" && window.nostr) {
+        try {
+          await window.nostr.getPublicKey();
+          return true;
+        } catch {
+          // Extension exists but might not be ready
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    return false;
+  };
+
   const handleNip07Login = () => {
     startNip07Auth(async () => {
       setNip07Error(null);
       setMessage(null);
 
-      if (typeof window === "undefined" || !window.nostr) {
-        setNip07Error("NIP-07 browser extension not detected.");
+      // Wait for extension to be ready
+      const extensionReady = await waitForExtension();
+      if (!extensionReady) {
+        setNip07Error("NIP-07 browser extension not detected. Please install Alby, nos2x, or another NIP-07 compatible extension.");
         return;
       }
 
-      try {
-        // Get pubkey first to ensure extension is available
-        const pubkey = await window.nostr.getPublicKey();
-        if (!pubkey || typeof pubkey !== "string" || pubkey.length !== 64) {
-          setNip07Error("Invalid public key from extension");
+      let retries = 0;
+      const maxRetries = 2;
+
+      while (retries <= maxRetries) {
+        try {
+          // Get pubkey with timeout
+          const pubkeyPromise = window.nostr!.getPublicKey();
+          const timeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error("Extension timeout")), 10000)
+          );
+          
+          const pubkey = await Promise.race([pubkeyPromise, timeoutPromise]);
+          
+          if (!pubkey || typeof pubkey !== "string" || pubkey.length !== 64) {
+            throw new Error("Invalid public key from extension");
+          }
+
+          // Create an unsigned event template
+          const eventTemplate = {
+            kind: AUTH_KIND,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["relay", "wss://relay.pleb.one"],
+              ["client", "relay.pleb.one"],
+              ["challenge", crypto.randomUUID()],
+            ],
+            content: "Login request for relay.pleb.one",
+          };
+
+          // Sign the event with timeout
+          const signPromise = window.nostr!.signEvent(eventTemplate);
+          const signTimeout = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error("Signing timeout")), 30000)
+          );
+          
+          const signedEvent = await Promise.race([signPromise, signTimeout]);
+          
+          // Validate the signed event has required fields
+          if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
+            throw new Error("Extension returned incomplete signed event");
+          }
+
+          // Verify the pubkey matches
+          if (signedEvent.pubkey !== pubkey) {
+            throw new Error("Signed event pubkey mismatch");
+          }
+
+          // Validate event structure
+          if (!signedEvent.kind || !signedEvent.created_at || !Array.isArray(signedEvent.tags)) {
+            throw new Error("Invalid event structure from extension");
+          }
+
+          const result = await signIn("nip07", {
+            pubkey: signedEvent.pubkey,
+            event: JSON.stringify(signedEvent),
+            redirect: false,
+          });
+
+          if (!result) {
+            throw new Error("No response from authentication server");
+          }
+
+          if (result.error && result.error !== "undefined") {
+            throw new Error(result.error);
+          }
+
+          if (!result.ok) {
+            throw new Error("Authentication rejected. Please ensure you have an active account.");
+          }
+
+          setMessage("Authenticated via NIP-07");
+          router.push("/dashboard");
           return;
-        }
 
-        // Create an unsigned event template (without id, sig, or pubkey - signer adds these)
-        const eventTemplate = {
-          kind: AUTH_KIND,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ["relay", "wss://relay.pleb.one"],
-            ["client", "relay.pleb.one"],
-            ["challenge", crypto.randomUUID()],
-          ],
-          content: "Login request for relay.pleb.one",
-        };
-
-        // Sign the event - this returns a complete signed event with id, pubkey, and sig
-        const signedEvent = await window.nostr.signEvent(eventTemplate);
-        
-        // Validate the signed event has required fields
-        if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
-          setNip07Error("Extension returned invalid signed event");
-          return;
-        }
-
-        // Verify the pubkey matches what we requested
-        if (signedEvent.pubkey !== pubkey) {
-          setNip07Error("Signed event pubkey mismatch");
-          return;
-        }
-
-        const result = await signIn("nip07", {
-          pubkey: signedEvent.pubkey,
-          event: JSON.stringify(signedEvent),
-          redirect: false,
-        });
-
-        if (!result) {
-          setNip07Error("Authentication failed - no response from server");
-          return;
-        }
-
-        if (result.error) {
-          setNip07Error(result.error === "undefined" ? "Authentication failed. Please try again." : result.error);
-          return;
-        }
-
-        if (!result.ok) {
-          setNip07Error("Authentication failed. Please ensure you have an active account.");
-          return;
-        }
-
-        setMessage("Authenticated via NIP-07");
-        router.push("/dashboard");
-      } catch (error) {
-        console.error("NIP-07 login error:", error);
-        if (error instanceof Error) {
-          setNip07Error(`Failed to authenticate: ${error.message}`);
-        } else {
-          setNip07Error("Failed to authenticate with NIP-07");
+        } catch (error) {
+          retries++;
+          console.error(`NIP-07 login attempt ${retries} failed:`, error);
+          
+          if (retries > maxRetries) {
+            if (error instanceof Error) {
+              if (error.message.includes("timeout") || error.message.includes("Timeout")) {
+                setNip07Error("Extension took too long to respond. Please try again or check your extension.");
+              } else if (error.message.includes("rejected") || error.message.includes("denied")) {
+                setNip07Error("Signing was cancelled. Please approve the signature request in your extension.");
+              } else {
+                setNip07Error(error.message);
+              }
+            } else {
+              setNip07Error("Failed to authenticate with NIP-07. Please try again.");
+            }
+            return;
+          }
+          
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         }
       }
     });
