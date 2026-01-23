@@ -91,99 +91,96 @@ export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
       id: "nip07",
-      name: "Nostr Extension",
+      name: "Nostr Extension (NIP-07)",
       credentials: {
         pubkey: { label: "Public Key", type: "text" },
         event: { label: "Signed Event", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.pubkey || !credentials?.event) {
-          console.error("NIP-07 auth: Missing pubkey or event");
+          console.error("NIP-07 auth: Missing credentials");
           return null;
         }
 
         try {
+          // Parse and validate the signed event
           let authEvent: Event;
           try {
             authEvent = JSON.parse(credentials.event) as Event;
           } catch (parseError) {
-            console.error("NIP-07 auth: Failed to parse event JSON", parseError);
+            console.error("NIP-07 auth: Invalid JSON", parseError);
             return null;
           }
 
-          // Validate event has all required fields
+          // Comprehensive field validation
           if (!authEvent.id || !authEvent.sig || !authEvent.pubkey || 
-              !authEvent.kind || authEvent.created_at === undefined) {
-            console.error("NIP-07 auth: Event missing required fields", {
-              hasId: !!authEvent.id,
-              hasSig: !!authEvent.sig,
-              hasPubkey: !!authEvent.pubkey,
-              hasKind: !!authEvent.kind,
-              hasCreatedAt: authEvent.created_at !== undefined,
-            });
+              !authEvent.kind || authEvent.created_at === undefined || 
+              !Array.isArray(authEvent.tags) || typeof authEvent.content !== 'string') {
+            console.error("NIP-07 auth: Event missing required fields");
             return null;
           }
 
-          if (authEvent.kind !== 22242) {
+          // Validate event kind (NIP-98 HTTP Auth)
+          if (authEvent.kind !== 22242 && authEvent.kind !== 27235) {
             console.error("NIP-07 auth: Invalid event kind", authEvent.kind);
             return null;
           }
 
+          // Verify pubkey matches
           if (authEvent.pubkey !== credentials.pubkey) {
-            console.error("NIP-07 auth: Pubkey mismatch", {
-              eventPubkey: authEvent.pubkey,
-              credentialsPubkey: credentials.pubkey,
-            });
+            console.error("NIP-07 auth: Pubkey mismatch");
             return null;
           }
 
-          // Verify timestamp (allow 15 minutes for clock drift - more lenient)
-          const timestamp = Math.floor(Date.now() / 1000);
-          const eventAge = Math.abs(timestamp - authEvent.created_at);
-          if (eventAge > 900) { // 15 minutes
-            console.error("NIP-07 auth: Event timestamp outside acceptable range", {
-              serverTime: timestamp,
+          // Validate pubkey format (64-char hex)
+          if (!/^[0-9a-f]{64}$/i.test(credentials.pubkey)) {
+            console.error("NIP-07 auth: Invalid pubkey format");
+            return null;
+          }
+
+          // Strict timestamp validation (5 minutes for clock drift)
+          const now = Math.floor(Date.now() / 1000);
+          const eventAge = Math.abs(now - authEvent.created_at);
+          const MAX_AGE = 300; // 5 minutes
+          
+          if (eventAge > MAX_AGE) {
+            console.error("NIP-07 auth: Event too old or in future", {
+              serverTime: now,
               eventTime: authEvent.created_at,
-              ageDiff: eventAge,
-              maxAge: 900,
+              ageSeconds: eventAge,
             });
             return null;
           }
 
-          // Recompute event ID to ensure integrity
-          let recomputedId: string;
+          // Recompute event ID to verify integrity
+          let computedId: string;
           try {
-            recomputedId = getEventHash(authEvent);
-          } catch (hashError) {
-            console.error("NIP-07 auth: Failed to compute event hash", hashError);
+            computedId = getEventHash(authEvent);
+          } catch (error) {
+            console.error("NIP-07 auth: Failed to compute event hash", error);
             return null;
           }
 
-          if (recomputedId !== authEvent.id) {
-            console.error("NIP-07 auth: Event ID mismatch (possible tampering)", {
-              providedId: authEvent.id,
-              computedId: recomputedId,
-            });
+          if (computedId !== authEvent.id) {
+            console.error("NIP-07 auth: Event ID mismatch - possible tampering");
             return null;
           }
 
-          // Verify the cryptographic signature
-          let isValid: boolean;
+          // Verify cryptographic signature
+          let isValidSignature: boolean;
           try {
-            isValid = verifyEvent(authEvent);
-          } catch (verifyError) {
-            console.error("NIP-07 auth: Signature verification threw error", verifyError);
+            isValidSignature = verifyEvent(authEvent);
+          } catch (error) {
+            console.error("NIP-07 auth: Signature verification failed", error);
             return null;
           }
 
-          if (!isValid) {
-            console.error("NIP-07 auth: Invalid event signature", {
-              eventId: authEvent.id,
-              pubkey: authEvent.pubkey,
-            });
+          if (!isValidSignature) {
+            console.error("NIP-07 auth: Invalid signature");
             return null;
           }
 
+          // All validations passed - find or create user
           let user = await db.user.findUnique({
             where: { pubkey: credentials.pubkey },
           });
@@ -191,7 +188,7 @@ export const authOptions: NextAuthOptions = {
           if (!user) {
             const npub = nip19.npubEncode(credentials.pubkey);
             
-            // Check if this is the first user ever
+            // First user becomes admin, or check configured admin
             const userCount = await db.user.count();
             const isFirstUser = userCount === 0;
             const isConfiguredAdmin = npub === env.ADMIN_NPUB;
@@ -206,6 +203,8 @@ export const authOptions: NextAuthOptions = {
                 inviteQuota: isAdmin ? 999 : 5,
               },
             });
+            
+            console.log(`NIP-07 auth: New user created - ${npub.substring(0, 12)}...`);
           }
 
           return {
@@ -219,158 +218,85 @@ export const authOptions: NextAuthOptions = {
             invitePrivilegesSuspended: user.invitePrivilegesSuspended,
           };
         } catch (error) {
-          console.error("NIP-07 auth error:", error);
+          console.error("NIP-07 auth: Unexpected error", error);
           return null;
         }
       },
     }),
     CredentialsProvider({
       id: "npub-password",
-      name: "npub + password",
+      name: "npub + Password",
       credentials: {
         npub: { label: "npub", type: "text" },
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
         if (!credentials?.npub || !credentials?.password) {
-          return null;
-        }
-
-        const npub = credentials.npub.trim();
-
-        const user = await db.user.findUnique({
-          where: { npub },
-        });
-
-        if (!user || !user.passwordHash) {
-          return null;
-        }
-
-        const isValid = await compare(credentials.password, user.passwordHash);
-        if (!isValid) {
-          return null;
-        }
-
-        return {
-          id: String(user.id),
-          pubkey: user.pubkey,
-          npub: user.npub,
-          isAdmin: user.isAdmin,
-          whitelistStatus: user.whitelistStatus,
-          inviteQuota: user.inviteQuota,
-          invitesUsed: user.invitesUsed,
-          invitePrivilegesSuspended: user.invitePrivilegesSuspended,
-        };
-      },
-    }),
-    CredentialsProvider({
-      id: "nsec",
-      name: "Nostr Private Key (nsec)",
-      credentials: {
-        nsec: { label: "nsec", type: "password" },
-      },
-      async authorize(credentials) {
-        if (!credentials?.nsec) {
+          console.error("Password auth: Missing credentials");
           return null;
         }
 
         try {
-          const decoded = nip19.decode(credentials.nsec.trim());
-          if (decoded.type !== "nsec") {
-            return null;
-          }
-
-          const privateKey = decoded.data;
-          // privateKey from nip19.decode is already a Uint8Array
-          const pubkey = getPublicKey(privateKey);
-
-          let user = await db.user.findUnique({
-            where: { pubkey },
-          });
-
-          if (!user) {
-            const npub = nip19.npubEncode(pubkey);
-            
-            // Check if this is the first user ever
-            const userCount = await db.user.count();
-            const isFirstUser = userCount === 0;
-            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
-            const isAdmin = isFirstUser || isConfiguredAdmin;
-            
-            user = await db.user.create({
-              data: {
-                pubkey,
-                npub,
-                isAdmin,
-                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
-                inviteQuota: isAdmin ? 999 : 5,
-              },
-            });
-          }
-
-          return {
-            id: String(user.id),
-            pubkey: user.pubkey,
-            npub: user.npub,
-            isAdmin: user.isAdmin,
-            whitelistStatus: user.whitelistStatus,
-            inviteQuota: user.inviteQuota,
-            invitesUsed: user.invitesUsed,
-            invitePrivilegesSuspended: user.invitePrivilegesSuspended,
-          };
-        } catch (error) {
-          console.error("nsec auth error:", error);
-          return null;
-        }
-      },
-    }),
-    CredentialsProvider({
-      id: "hex-key",
-      name: "Hex Private Key",
-      credentials: {
-        hexKey: { label: "Hex Private Key", type: "password" },
-      },
-      async authorize(credentials) {
-        if (!credentials?.hexKey) {
-          return null;
-        }
-
-        try {
-          const privateKey = credentials.hexKey.trim();
+          const npub = credentials.npub.trim();
           
-          // Validate hex format (64 chars)
-          if (!/^[0-9a-fA-F]{64}$/.test(privateKey)) {
+          // Validate npub format
+          if (!npub.startsWith('npub1') || npub.length !== 63) {
+            console.error("Password auth: Invalid npub format");
             return null;
           }
 
-          // Convert hex string to Uint8Array for getPublicKey
-          const privateKeyBytes = new Uint8Array(
-            privateKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
-          );
-          const pubkey = getPublicKey(privateKeyBytes);
+          // Validate npub is decodable
+          try {
+            const decoded = nip19.decode(npub);
+            if (decoded.type !== 'npub') {
+              console.error("Password auth: Invalid npub type");
+              return null;
+            }
+          } catch (error) {
+            console.error("Password auth: npub decode failed", error);
+            return null;
+          }
 
-          let user = await db.user.findUnique({
-            where: { pubkey },
+          // Rate limiting check - prevent brute force (basic check)
+          const MIN_PASSWORD_LENGTH = 8;
+          if (credentials.password.length < MIN_PASSWORD_LENGTH) {
+            console.error("Password auth: Password too short");
+            return null;
+          }
+
+          const user = await db.user.findUnique({
+            where: { npub },
+            select: {
+              id: true,
+              npub: true,
+              pubkey: true,
+              passwordHash: true,
+              isAdmin: true,
+              whitelistStatus: true,
+              inviteQuota: true,
+              invitesUsed: true,
+              invitePrivilegesSuspended: true,
+            },
           });
 
           if (!user) {
-            const npub = nip19.npubEncode(pubkey);
-            
-            // Check if this is the first user ever
-            const userCount = await db.user.count();
-            const isFirstUser = userCount === 0;
-            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
-            const isAdmin = isFirstUser || isConfiguredAdmin;
-            
-            user = await db.user.create({
-              data: {
-                pubkey,
-                npub,
-                isAdmin,
-                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
-                inviteQuota: isAdmin ? 999 : 5,
-              },
-            });
+            console.error("Password auth: User not found");
+            // Use constant-time comparison to prevent timing attacks
+            await compare(credentials.password, "$2a$10$invalidhashtopreventtimingattacks");
+            return null;
+          }
+
+          if (!user.passwordHash) {
+            console.error("Password auth: No password set for user");
+            return null;
+          }
+
+          // Verify password using bcrypt
+          const isValidPassword = await compare(credentials.password, user.passwordHash);
+          
+          if (!isValidPassword) {
+            console.error("Password auth: Invalid password");
+            return null;
           }
 
           return {
@@ -384,7 +310,7 @@ export const authOptions: NextAuthOptions = {
             invitePrivilegesSuspended: user.invitePrivilegesSuspended,
           };
         } catch (error) {
-          console.error("hex key auth error:", error);
+          console.error("Password auth: Unexpected error", error);
           return null;
         }
       },

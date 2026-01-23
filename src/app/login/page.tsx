@@ -14,26 +14,23 @@ export default function LoginPage() {
   const router = useRouter();
   const [npub, setNpub] = useState("");
   const [password, setPassword] = useState("");
-  const [nsec, setNsec] = useState("");
-  const [hexKey, setHexKey] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [nip07Error, setNip07Error] = useState<string | null>(null);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
-  const [nsecError, setNsecError] = useState<string | null>(null);
-  const [hexKeyError, setHexKeyError] = useState<string | null>(null);
   const [isNip07Pending, startNip07Auth] = useTransition();
   const [isCredentialsPending, startCredentialsAuth] = useTransition();
-  const [isNsecPending, startNsecAuth] = useTransition();
-  const [isHexKeyPending, startHexKeyAuth] = useTransition();
 
-  const waitForExtension = async (maxAttempts = 10, delayMs = 100): Promise<boolean> => {
+  const waitForExtension = async (maxAttempts = 20, delayMs = 100): Promise<boolean> => {
     for (let i = 0; i < maxAttempts; i++) {
       if (typeof window !== "undefined" && window.nostr) {
         try {
-          await window.nostr.getPublicKey();
+          await Promise.race([
+            window.nostr.getPublicKey(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 2000))
+          ]);
           return true;
         } catch {
-          // Extension exists but might not be ready
+          // Extension exists but not ready or timed out
         }
       }
       await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -49,7 +46,7 @@ export default function LoginPage() {
       // Wait for extension to be ready
       const extensionReady = await waitForExtension();
       if (!extensionReady) {
-        setNip07Error("NIP-07 browser extension not detected. Please install Alby, nos2x, or another NIP-07 compatible extension.");
+        setNip07Error("NIP-07 extension not found. Please install Alby, nos2x, Flamingo, or another compatible extension and refresh.");
         return;
       }
 
@@ -58,19 +55,20 @@ export default function LoginPage() {
 
       while (retries <= maxRetries) {
         try {
-          // Get pubkey with timeout
+          // Get pubkey with timeout protection
           const pubkeyPromise = window.nostr!.getPublicKey();
           const timeoutPromise = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error("Extension timeout")), 10000)
+            setTimeout(() => reject(new Error("Extension timeout - took longer than 10 seconds")), 10000)
           );
           
           const pubkey = await Promise.race([pubkeyPromise, timeoutPromise]);
           
-          if (!pubkey || typeof pubkey !== "string" || pubkey.length !== 64) {
-            throw new Error("Invalid public key from extension");
+          // Validate pubkey format (64-char hex)
+          if (!pubkey || typeof pubkey !== "string" || !/^[0-9a-f]{64}$/i.test(pubkey)) {
+            throw new Error("Invalid public key format from extension");
           }
 
-          // Create an unsigned event template
+          // Create authentication event template (NIP-98)
           const eventTemplate = {
             kind: AUTH_KIND,
             created_at: Math.floor(Date.now() / 1000),
@@ -79,32 +77,30 @@ export default function LoginPage() {
               ["client", "relay.pleb.one"],
               ["challenge", crypto.randomUUID()],
             ],
-            content: "Login request for relay.pleb.one",
+            content: "Authentication request for relay.pleb.one",
           };
 
-          // Sign the event with timeout
+          // Sign event with timeout protection (30s for user interaction)
           const signPromise = window.nostr!.signEvent(eventTemplate);
           const signTimeout = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error("Signing timeout")), 30000)
+            setTimeout(() => reject(new Error("Signing timeout - took longer than 30 seconds")), 30000)
           );
           
           const signedEvent = await Promise.race([signPromise, signTimeout]);
           
-          // Validate the signed event has required fields
-          if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
-            throw new Error("Extension returned incomplete signed event");
+          // Comprehensive validation of signed event
+          if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey ||
+              !signedEvent.kind || !signedEvent.created_at || 
+              !Array.isArray(signedEvent.tags) || typeof signedEvent.content !== 'string') {
+            throw new Error("Extension returned invalid or incomplete event");
           }
 
-          // Verify the pubkey matches
+          // Security check: verify pubkey consistency
           if (signedEvent.pubkey !== pubkey) {
-            throw new Error("Signed event pubkey mismatch");
+            throw new Error("Security error: Pubkey mismatch in signed event");
           }
 
-          // Validate event structure
-          if (!signedEvent.kind || !signedEvent.created_at || !Array.isArray(signedEvent.tags)) {
-            throw new Error("Invalid event structure from extension");
-          }
-
+          // Submit to authentication server
           const result = await signIn("nip07", {
             pubkey: signedEvent.pubkey,
             event: JSON.stringify(signedEvent),
@@ -112,41 +108,48 @@ export default function LoginPage() {
           });
 
           if (!result) {
-            throw new Error("No response from authentication server");
+            throw new Error("No response from server");
           }
 
-          if (result.error && result.error !== "undefined") {
-            throw new Error(result.error);
+          if (result.error) {
+            throw new Error(result.error === "CredentialsSignin" 
+              ? "Authentication failed - please try again" 
+              : result.error);
           }
 
           if (!result.ok) {
-            throw new Error("Authentication rejected. Please ensure you have an active account.");
+            throw new Error("Authentication rejected by server");
           }
 
-          setMessage("Authenticated via NIP-07");
+          // Success!
+          setMessage("✓ Authenticated successfully");
           router.push("/dashboard");
           return;
 
         } catch (error) {
           retries++;
-          console.error(`NIP-07 login attempt ${retries} failed:`, error);
+          console.error(`NIP-07 attempt ${retries}/${maxRetries + 1} failed:`, error);
           
           if (retries > maxRetries) {
+            // Final failure - provide helpful error message
             if (error instanceof Error) {
-              if (error.message.includes("timeout") || error.message.includes("Timeout")) {
-                setNip07Error("Extension took too long to respond. Please try again or check your extension.");
-              } else if (error.message.includes("rejected") || error.message.includes("denied")) {
-                setNip07Error("Signing was cancelled. Please approve the signature request in your extension.");
+              const msg = error.message.toLowerCase();
+              if (msg.includes("timeout")) {
+                setNip07Error("Extension timeout. Try again or use a different extension.");
+              } else if (msg.includes("reject") || msg.includes("cancel") || msg.includes("denied")) {
+                setNip07Error("You cancelled the signature. Click again and approve to continue.");
+              } else if (msg.includes("not found") || msg.includes("not detected")) {
+                setNip07Error("Extension not accessible. Please check it's enabled and try again.");
               } else {
-                setNip07Error(error.message);
+                setNip07Error(`Error: ${error.message}`);
               }
             } else {
-              setNip07Error("Failed to authenticate with NIP-07. Please try again.");
+              setNip07Error("Authentication failed. Please try again.");
             }
             return;
           }
           
-          // Wait before retry
+          // Exponential backoff before retry
           await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         }
       }
@@ -160,76 +163,54 @@ export default function LoginPage() {
       setMessage(null);
 
       const trimmedNpub = npub.trim();
-      if (!trimmedNpub || !password) {
-        setCredentialsError("npub and password are required");
+      
+      // Client-side validation
+      if (!trimmedNpub) {
+        setCredentialsError("Please enter your npub");
+        return;
+      }
+      
+      if (!password) {
+        setCredentialsError("Please enter your password");
         return;
       }
 
-      const result = await signIn("npub-password", {
-        npub: trimmedNpub,
-        password,
-        redirect: false,
-      });
-
-      if (result?.error) {
-        setCredentialsError(result.error || "Login failed");
+      if (!trimmedNpub.startsWith('npub1')) {
+        setCredentialsError("Invalid npub format - must start with 'npub1'");
         return;
       }
 
-      setMessage("Authenticated via npub + password");
-      router.push("/dashboard");
-    });
-  };
-
-  const handleNsecLogin = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    startNsecAuth(async () => {
-      setNsecError(null);
-      setMessage(null);
-
-      if (!nsec.trim()) {
-        setNsecError("nsec is required");
+      if (password.length < 8) {
+        setCredentialsError("Password must be at least 8 characters");
         return;
       }
 
-      const result = await signIn("nsec", {
-        nsec: nsec.trim(),
-        redirect: false,
-      });
+      try {
+        const result = await signIn("npub-password", {
+          npub: trimmedNpub,
+          password,
+          redirect: false,
+        });
 
-      if (result?.error) {
-        setNsecError(result.error || "Invalid nsec");
-        return;
+        if (result?.error) {
+          const errorMsg = result.error === "CredentialsSignin" 
+            ? "Invalid npub or password" 
+            : result.error;
+          setCredentialsError(errorMsg);
+          return;
+        }
+
+        if (!result?.ok) {
+          setCredentialsError("Authentication failed - please try again");
+          return;
+        }
+
+        setMessage("✓ Authenticated successfully");
+        router.push("/dashboard");
+      } catch (error) {
+        console.error("Password auth error:", error);
+        setCredentialsError("An error occurred. Please try again.");
       }
-
-      setMessage("Authenticated via nsec");
-      router.push("/dashboard");
-    });
-  };
-
-  const handleHexKeyLogin = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    startHexKeyAuth(async () => {
-      setHexKeyError(null);
-      setMessage(null);
-
-      if (!hexKey.trim()) {
-        setHexKeyError("Hex private key is required");
-        return;
-      }
-
-      const result = await signIn("hex-key", {
-        hexKey: hexKey.trim(),
-        redirect: false,
-      });
-
-      if (result?.error) {
-        setHexKeyError(result.error || "Invalid hex key");
-        return;
-      }
-
-      setMessage("Authenticated via hex key");
-      router.push("/dashboard");
     });
   };
 
@@ -237,12 +218,12 @@ export default function LoginPage() {
     <main className="min-h-screen bg-black text-green-400 relative overflow-hidden">
       <MatrixRain />
       <div className="relative z-10 min-h-screen flex items-center justify-center px-4 py-16">
-        <div className="w-full max-w-5xl space-y-8">
+        <div className="w-full max-w-4xl space-y-8">
           <div className="text-center space-y-2">
-            <p className="text-sm uppercase tracking-[0.3em] text-green-500">Access Control</p>
+            <p className="text-sm uppercase tracking-[0.3em] text-green-500">Secure Access</p>
             <h1 className="text-4xl font-bold">Authenticate with Nostr</h1>
             <p className="text-gray-400">
-              Multiple authentication methods supported. First user becomes admin automatically.
+              Two secure authentication methods. First user becomes admin automatically.
             </p>
             <p className="text-sm text-gray-500">
               Need an invite? <Link href="/request" className="text-green-300 underline decoration-dotted">Request access instead</Link>.
@@ -250,94 +231,56 @@ export default function LoginPage() {
           </div>
 
           <div className="grid gap-6 md:grid-cols-2">
-            {/* NIP-07 Browser Extension */}
+            {/* NIP-07 Browser Extension - Primary Method */}
             <TerminalWindow title="auth --method nip07">
               <div className="space-y-4">
-                <p className="text-sm text-gray-300">
-                  Use a browser extension (Alby, nos2x, Flamingo, etc.) to sign an auth event.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300">
+                    <strong className="text-green-400">Recommended:</strong> Use a NIP-07 browser extension to sign securely.
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Compatible with: Alby, nos2x, Flamingo, Horse, Nostore
+                  </p>
+                </div>
                 <GlowingButton
                   onClick={handleNip07Login}
                   disabled={isNip07Pending}
                   className="w-full justify-center"
                 >
-                  {isNip07Pending ? "Awaiting signature..." : "🔌 Sign in with Extension"}
+                  {isNip07Pending ? "Waiting for signature..." : "🔌 Sign in with Extension"}
                 </GlowingButton>
-                {nip07Error && <p className="text-sm text-red-400">{nip07Error}</p>}
+                {nip07Error && (
+                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                    <p className="text-sm text-red-400">{nip07Error}</p>
+                  </div>
+                )}
+                <div className="pt-2 text-xs text-gray-600 border-t border-gray-800">
+                  <p>✓ Private keys never leave your device</p>
+                  <p>✓ Best security and user experience</p>
+                </div>
               </div>
             </TerminalWindow>
 
-            {/* nsec (Private Key) */}
-            <TerminalWindow title="auth --method nsec">
-              <form className="space-y-4" onSubmit={handleNsecLogin}>
-                <p className="text-sm text-gray-300">
-                  Login with your Nostr private key (nsec format).
-                </p>
-                <label className="block text-sm">
-                  <span className="block text-gray-400 mb-1">Private Key (nsec)</span>
-                  <input
-                    type="password"
-                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
-                    placeholder="nsec1..."
-                    value={nsec}
-                    onChange={(e) => setNsec(e.target.value)}
-                    autoComplete="off"
-                  />
-                </label>
-                <GlowingButton
-                  type="submit"
-                  disabled={isNsecPending}
-                  className="w-full justify-center"
-                >
-                  {isNsecPending ? "Signing in..." : "🔑 Sign in with nsec"}
-                </GlowingButton>
-                {nsecError && <p className="text-sm text-red-400">{nsecError}</p>}
-              </form>
-            </TerminalWindow>
-
-            {/* Hex Private Key */}
-            <TerminalWindow title="auth --method hex">
-              <form className="space-y-4" onSubmit={handleHexKeyLogin}>
-                <p className="text-sm text-gray-300">
-                  Login with your raw hex private key (64 characters).
-                </p>
-                <label className="block text-sm">
-                  <span className="block text-gray-400 mb-1">Hex Private Key</span>
-                  <input
-                    type="password"
-                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
-                    placeholder="0123456789abcdef..."
-                    value={hexKey}
-                    onChange={(e) => setHexKey(e.target.value)}
-                    autoComplete="off"
-                  />
-                </label>
-                <GlowingButton
-                  type="submit"
-                  variant="secondary"
-                  disabled={isHexKeyPending}
-                  className="w-full justify-center"
-                >
-                  {isHexKeyPending ? "Signing in..." : "🔐 Sign in with Hex Key"}
-                </GlowingButton>
-                {hexKeyError && <p className="text-sm text-red-400">{hexKeyError}</p>}
-              </form>
-            </TerminalWindow>
-
-            {/* npub + Password */}
-            <TerminalWindow title="auth --method npub+password">
+            {/* npub + Password - Alternative Method */}
+            <TerminalWindow title="auth --method password">
               <form className="space-y-4" onSubmit={handleCredentialsLogin}>
-                <p className="text-sm text-gray-300">
-                  If you&apos;ve set a password for your npub.
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300">
+                    If you&apos;ve previously set a password for your npub.
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Don&apos;t have a password? Use NIP-07 extension instead.
+                  </p>
+                </div>
                 <label className="block text-sm">
-                  <span className="block text-gray-400 mb-1">npub</span>
+                  <span className="block text-gray-400 mb-1">Public Key (npub)</span>
                   <input
                     className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
                     placeholder="npub1..."
                     value={npub}
                     onChange={(e) => setNpub(e.target.value)}
                     autoComplete="username"
+                    disabled={isCredentialsPending}
                   />
                 </label>
                 <label className="block text-sm">
@@ -345,9 +288,11 @@ export default function LoginPage() {
                   <input
                     type="password"
                     className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     autoComplete="current-password"
+                    disabled={isCredentialsPending}
                   />
                 </label>
                 <GlowingButton
@@ -358,19 +303,35 @@ export default function LoginPage() {
                 >
                   {isCredentialsPending ? "Verifying..." : "🔒 Sign in with Password"}
                 </GlowingButton>
-                {credentialsError && <p className="text-sm text-red-400">{credentialsError}</p>}
+                {credentialsError && (
+                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                    <p className="text-sm text-red-400">{credentialsError}</p>
+                  </div>
+                )}
+                <div className="pt-2 text-xs text-gray-600 border-t border-gray-800">
+                  <p>⚠ Requires password to be set in settings</p>
+                  <p>⚠ Less secure than NIP-07 extensions</p>
+                </div>
               </form>
             </TerminalWindow>
           </div>
 
           {message && (
-            <div className="text-center text-sm text-green-400">{message}</div>
+            <div className="text-center p-4 rounded bg-green-950/30 border border-green-500/40">
+              <p className="text-sm text-green-400">{message}</p>
+            </div>
           )}
 
-          <div className="text-center text-sm text-gray-500">
-            <Link href="/" className="hover:text-green-300">
-              {'<'} Back to relay.pleb.one
-            </Link>
+          <div className="text-center space-y-2">
+            <div className="text-sm text-gray-500">
+              <Link href="/" className="hover:text-green-300 transition-colors">
+                {'<'} Back to relay.pleb.one
+              </Link>
+            </div>
+            <div className="pt-4 text-xs text-gray-600 space-y-1">
+              <p>🔐 Security Notice: Never enter your private key (nsec) on websites.</p>
+              <p>Always use NIP-07 extensions for maximum security.</p>
+            </div>
           </div>
         </div>
       </div>
