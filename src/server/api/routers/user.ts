@@ -255,4 +255,63 @@ export const userRouter = createTRPCRouter({
           : Math.max(0, invitesAvailable - 1),
       };
     }),
+
+  getNip05Settings: protectedProcedure.query(async ({ ctx }) => {
+    const user = await ctx.db.user.findUnique({
+      where: { id: ctx.session.user.id },
+      select: {
+        nip05Name: true,
+        nip05Enabled: true,
+      },
+    });
+
+    return {
+      name: user?.nip05Name ?? null,
+      enabled: user?.nip05Enabled ?? false,
+    };
+  }),
+
+  updateNip05: protectedProcedure
+    .input(
+      z.object({
+        name: z.string().min(1).max(30).regex(/^[a-z0-9_]+$/).optional(),
+        enabled: z.boolean(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const RESERVED_NAMES = ["admin", "root", "info", "support", "help", "abuse", "postmaster", "webmaster", "_"];
+      
+      if (input.name) {
+        const normalizedName = input.name.toLowerCase().trim();
+        
+        if (RESERVED_NAMES.includes(normalizedName)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "This name is reserved and cannot be used",
+          });
+        }
+
+        const existingUser = await ctx.db.user.findFirst({
+          where: {
+            nip05Name: normalizedName,
+            NOT: { id: ctx.session.user.id },
+          },
+        });
+
+        if (existingUser) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "This name is already taken",
+          });
+        }
+      }
+
+      return ctx.db.user.update({
+        where: { id: ctx.session.user.id },
+        data: {
+          nip05Name: input.name?.toLowerCase().trim() ?? null,
+          nip05Enabled: input.enabled,
+        },
+      });
+    }),
 });

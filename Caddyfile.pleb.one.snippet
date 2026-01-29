@@ -1,0 +1,30 @@
+# Caddyfile snippet for pleb.one (main website server)
+# Add this configuration to your existing pleb.one Caddyfile
+
+pleb.one {
+    # Proxy NIP-05 lookups to the relay backend
+    # This must come BEFORE other handlers to catch /.well-known requests
+    handle /.well-known/nostr.json {
+        reverse_proxy https://relay.pleb.one {
+            # Preserve the original Host header for the upstream server
+            header_up Host {upstream_hostport}
+            
+            # Forward client information
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+    
+    # Your existing website configuration continues here
+    # Example:
+    # root * /var/www/html
+    # file_server
+    # 
+    # handle /api/* {
+    #     reverse_proxy localhost:8000
+    # }
+}
+
+# Note: The relay server at relay.pleb.one will handle the actual
+# NIP-05 database lookup and return the response through this proxy.

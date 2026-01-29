@@ -8,6 +8,7 @@ import { AdminWhitelistPanel } from "@/components/dashboard/admin-whitelist-pane
 import { AdminMessageBoard } from "@/components/dashboard/admin-message-board";
 import { NipStatusPanel } from "@/components/dashboard/nip-status-panel";
 import { RelayInfoPanel } from "@/components/dashboard/relay-info-panel";
+import { Nip05Panel } from "@/components/dashboard/nip05-panel";
 import { GlowingButton } from "@/components/ui/cypherpunk";
 
 interface DashboardTabsProps {
@@ -15,7 +16,7 @@ interface DashboardTabsProps {
 }
 
 export function DashboardTabs({ session }: DashboardTabsProps) {
-  const [activeTab, setActiveTab] = useState<"feed" | "invites" | "setup" | "nips" | "admin">("feed");
+  const [activeTab, setActiveTab] = useState<"feed" | "invites" | "setup" | "nips" | "identity" | "admin">("feed");
   const isAdmin = session.user.isAdmin;
 
   return (
@@ -61,6 +62,16 @@ export function DashboardTabs({ session }: DashboardTabsProps) {
           }`}
         >
           NIP Status
+        </button>
+        <button
+          onClick={() => setActiveTab("identity")}
+          className={`rounded-t-lg px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all ${
+            activeTab === "identity"
+              ? "bg-green-900/20 text-green-400 border-b-2 border-green-500"
+              : "text-gray-500 hover:text-green-300 hover:bg-green-900/10"
+          }`}
+        >
+          Identity
         </button>
         {isAdmin && (
           <button
@@ -120,6 +131,12 @@ export function DashboardTabs({ session }: DashboardTabsProps) {
         {activeTab === "nips" && (
           <div className="mx-auto max-w-5xl">
             <NipStatusPanel />
+          </div>
+        )}
+
+        {activeTab === "identity" && (
+          <div className="mx-auto max-w-3xl">
+            <Nip05Panel />
           </div>
         )}
 

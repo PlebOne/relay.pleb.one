@@ -35,6 +35,8 @@ model User {
   requiresAdminApproval Boolean @default(false)
   lastInviteRefresh DateTime @default(now())
   invitedById     String?
+  nip05Name       String? @unique
+  nip05Enabled    Boolean @default(false)
   
   // Relations
   events        Event[]
@@ -46,6 +48,7 @@ model User {
   resolvedMessages AdminMessage[]
   
   @@map("users")
+  @@index([nip05Name])
 }
 
 // Nostr events storage

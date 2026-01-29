@@ -32,6 +32,11 @@
         reverse_proxy relay:3001
     }
 
+    # NIP-05 verification endpoint
+    handle /.well-known/nostr.json* {
+        reverse_proxy app:3000
+    }
+
     # Main application (Next.js)
     handle /api/* {
         reverse_proxy app:3000
