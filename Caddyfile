@@ -34,6 +34,7 @@
 
     # NIP-05 verification endpoint
     handle /.well-known/nostr.json* {
+        rewrite * /api{uri}
         reverse_proxy app:3000
     }
 
