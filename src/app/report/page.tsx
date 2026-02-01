@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { safeJsonParse } from "@/lib/fetch-utils";
 
 export default function ReportPage() {
   const [submitterNpub, setSubmitterNpub] = useState("");
@@ -31,10 +32,10 @@ export default function ReportPage() {
         }),
       });
 
-      const data = await response.json();
+      const { data, error } = await safeJsonParse<{ error?: string }>(response);
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to submit report");
+      if (error || !response.ok) {
+        throw new Error(error || data?.error || "Failed to submit report");
       }
 
       setSubmitStatus("success");

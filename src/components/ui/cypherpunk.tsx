@@ -1,6 +1,7 @@
 "use client";
 
 import { cloneElement, isValidElement, useEffect, useRef, useState } from "react";
+import { safeJsonParse } from "@/lib/fetch-utils";
 
 export function MatrixRain() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -160,7 +161,12 @@ export function BitcoinPrice() {
     const fetchPrice = async () => {
       try {
         const response = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd");
-        const data = await response.json();
+        const { data, error } = await safeJsonParse<{ bitcoin: { usd: number } }>(response);
+        
+        if (error || !data?.bitcoin?.usd) {
+          throw new Error(error || "Invalid price data");
+        }
+        
         setPrice(data.bitcoin.usd);
         setIsLoading(false);
       } catch (error) {

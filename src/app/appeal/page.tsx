@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { GlowingButton } from "@/components/ui/cypherpunk";
+import { safeJsonParse } from "@/lib/fetch-utils";
 
 export default function AppealPage() {
   const { data: session, status } = useSession();
@@ -35,7 +36,15 @@ export default function AppealPage() {
         }),
       });
 
-      const data = await response.json();
+      const { data, error } = await safeJsonParse<{ error?: string }>(response);
+
+      if (error) {
+        setResult({
+          success: false,
+          message: error,
+        });
+        return;
+      }
 
       if (response.ok) {
         setResult({
@@ -46,13 +55,13 @@ export default function AppealPage() {
       } else {
         setResult({
           success: false,
-          message: data.error || "Failed to submit appeal",
+          message: data?.error || "Failed to submit appeal",
         });
       }
     } catch (error) {
       setResult({
         success: false,
-        message: "Network error. Please try again.",
+        message: error instanceof Error ? error.message : "Network error. Please try again.",
       });
     } finally {
       setIsSubmitting(false);

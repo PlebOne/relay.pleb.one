@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { safeJsonParse } from "@/lib/fetch-utils";
 
 export default function RequestInvitePage() {
   const [npub, setNpub] = useState("");
@@ -41,7 +42,15 @@ export default function RequestInvitePage() {
         }),
       });
 
-      const data = await response.json();
+      const { data, error, status } = await safeJsonParse<{ alreadyWhitelisted?: boolean; error?: string; details?: string }>(response);
+
+      if (error) {
+        throw new Error(error);
+      }
+
+      if (!data) {
+        throw new Error("No response from server");
+      }
 
       if (data.alreadyWhitelisted) {
         setSubmitStatus("already_whitelisted");
