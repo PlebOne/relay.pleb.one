@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { Nip46Client, parseBunkerUrl } from "@/lib/nip46-client";
 
 // NIP-07 types are declared globally in src/types/nostr.d.ts
 
@@ -14,10 +15,13 @@ export default function LoginPage() {
   const router = useRouter();
   const [npub, setNpub] = useState("");
   const [password, setPassword] = useState("");
+  const [bunkerUrl, setBunkerUrl] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [nip07Error, setNip07Error] = useState<string | null>(null);
+  const [nip46Error, setNip46Error] = useState<string | null>(null);
   const [credentialsError, setCredentialsError] = useState<string | null>(null);
   const [isNip07Pending, startNip07Auth] = useTransition();
+  const [isNip46Pending, startNip46Auth] = useTransition();
   const [isCredentialsPending, startCredentialsAuth] = useTransition();
 
   const waitForExtension = async (maxAttempts = 20, delayMs = 100): Promise<boolean> => {
@@ -156,6 +160,105 @@ export default function LoginPage() {
     });
   };
 
+  const handleNip46Login = () => {
+    startNip46Auth(async () => {
+      setNip46Error(null);
+      setMessage(null);
+
+      const trimmedUrl = bunkerUrl.trim();
+      
+      if (!trimmedUrl) {
+        setNip46Error("Please enter a bunker:// connection string");
+        return;
+      }
+
+      if (!trimmedUrl.startsWith('bunker://')) {
+        setNip46Error("Invalid format - must start with bunker://");
+        return;
+      }
+
+      let client: Nip46Client | null = null;
+
+      try {
+        const { pubkey, secret } = parseBunkerUrl(trimmedUrl);
+        
+        client = new Nip46Client(pubkey, secret);
+        
+        setMessage("Connecting to remote signer...");
+        await client.connect();
+        
+        setMessage("Getting public key...");
+        const remotePubkey = await client.getPublicKey();
+        
+        if (!remotePubkey || !/^[0-9a-f]{64}$/i.test(remotePubkey)) {
+          throw new Error("Invalid public key from remote signer");
+        }
+
+        setMessage("Creating authentication event...");
+        const eventTemplate = {
+          kind: AUTH_KIND,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [
+            ["relay", "wss://relay.pleb.one"],
+            ["client", "relay.pleb.one"],
+            ["challenge", crypto.randomUUID()],
+          ],
+          content: "Authentication request for relay.pleb.one",
+        };
+
+        setMessage("Signing event with remote signer...");
+        const signedEvent = await client.signEvent(eventTemplate);
+
+        if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
+          throw new Error("Invalid signed event from remote signer");
+        }
+
+        setMessage("Authenticating...");
+        const result = await signIn("nip46", {
+          pubkey: signedEvent.pubkey,
+          event: JSON.stringify(signedEvent),
+          redirect: false,
+        });
+
+        if (!result) {
+          throw new Error("No response from server");
+        }
+
+        if (result.error) {
+          throw new Error(result.error === "CredentialsSignin" 
+            ? "Authentication failed - please try again" 
+            : result.error);
+        }
+
+        if (!result.ok) {
+          throw new Error("Authentication rejected by server");
+        }
+
+        setMessage("✓ Authenticated successfully");
+        router.push("/dashboard");
+
+      } catch (error) {
+        console.error("NIP-46 auth error:", error);
+        if (error instanceof Error) {
+          const msg = error.message.toLowerCase();
+          if (msg.includes("timeout") || msg.includes("connection")) {
+            setNip46Error("Connection timeout. Check your bunker URL and try again.");
+          } else if (msg.includes("parse") || msg.includes("invalid")) {
+            setNip46Error("Invalid bunker URL format. Should be bunker://pubkey?relay=...");
+          } else {
+            setNip46Error(`Error: ${error.message}`);
+          }
+        } else {
+          setNip46Error("Authentication failed. Please try again.");
+        }
+      } finally {
+        if (client) {
+          client.cleanup();
+        }
+      }
+    });
+  };
+
   const handleCredentialsLogin = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     startCredentialsAuth(async () => {
@@ -223,15 +326,15 @@ export default function LoginPage() {
             <p className="text-sm uppercase tracking-[0.3em] text-green-500">Secure Access</p>
             <h1 className="text-4xl font-bold">Authenticate with Nostr</h1>
             <p className="text-gray-400">
-              Two secure authentication methods. First user becomes admin automatically.
+              Multiple secure authentication methods. First user becomes admin automatically.
             </p>
             <p className="text-sm text-gray-500">
               Need an invite? <Link href="/request" className="text-green-300 underline decoration-dotted">Request access instead</Link>.
             </p>
           </div>
 
-          <div className="grid gap-6 md:grid-cols-2">
-            {/* NIP-07 Browser Extension - Primary Method */}
+          <div className="grid gap-6 md:grid-cols-3">
+            {/* NIP-07 Browser Extension */}
             <TerminalWindow title="auth --method nip07">
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -257,6 +360,46 @@ export default function LoginPage() {
                 <div className="pt-2 text-xs text-gray-600 border-t border-gray-800">
                   <p>✓ Private keys never leave your device</p>
                   <p>✓ Best security and user experience</p>
+                </div>
+              </div>
+            </TerminalWindow>
+
+            {/* NIP-46 Nostr Connect */}
+            <TerminalWindow title="auth --method nip46">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300">
+                    <strong className="text-green-400">Remote Signing:</strong> Use Nostr Connect for mobile or remote signers.
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Compatible with: Amber, nsec.app, Nostr Connect apps
+                  </p>
+                </div>
+                <label className="block text-sm">
+                  <span className="block text-gray-400 mb-1">Bunker Connection String</span>
+                  <input
+                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
+                    placeholder="bunker://..."
+                    value={bunkerUrl}
+                    onChange={(e) => setBunkerUrl(e.target.value)}
+                    disabled={isNip46Pending}
+                  />
+                </label>
+                <GlowingButton
+                  onClick={handleNip46Login}
+                  disabled={isNip46Pending}
+                  className="w-full justify-center"
+                >
+                  {isNip46Pending ? "Connecting..." : "🔗 Connect Remote Signer"}
+                </GlowingButton>
+                {nip46Error && (
+                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                    <p className="text-sm text-red-400">{nip46Error}</p>
+                  </div>
+                )}
+                <div className="pt-2 text-xs text-gray-600 border-t border-gray-800">
+                  <p>✓ Works on mobile devices</p>
+                  <p>✓ Supports remote signing</p>
                 </div>
               </div>
             </TerminalWindow>
@@ -330,7 +473,7 @@ export default function LoginPage() {
             </div>
             <div className="pt-4 text-xs text-gray-600 space-y-1">
               <p>🔐 Security Notice: Never enter your private key (nsec) on websites.</p>
-              <p>Always use NIP-07 extensions for maximum security.</p>
+              <p>Recommended: Use NIP-07 extensions or NIP-46 remote signers.</p>
             </div>
           </div>
         </div>

@@ -90,6 +90,125 @@ export const authOptions: NextAuthOptions = {
   },
   providers: [
     CredentialsProvider({
+      id: "nip46",
+      name: "Nostr Connect (NIP-46)",
+      credentials: {
+        pubkey: { label: "Public Key", type: "text" },
+        event: { label: "Signed Event", type: "text" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.pubkey || !credentials?.event) {
+          console.error("NIP-46 auth: Missing credentials");
+          return null;
+        }
+
+        try {
+          let authEvent: Event;
+          try {
+            authEvent = JSON.parse(credentials.event) as Event;
+          } catch (parseError) {
+            console.error("NIP-46 auth: Invalid JSON", parseError);
+            return null;
+          }
+
+          if (!authEvent.id || !authEvent.sig || !authEvent.pubkey || 
+              !authEvent.kind || authEvent.created_at === undefined || 
+              !Array.isArray(authEvent.tags) || typeof authEvent.content !== 'string') {
+            console.error("NIP-46 auth: Event missing required fields");
+            return null;
+          }
+
+          if (authEvent.kind !== 22242 && authEvent.kind !== 27235) {
+            console.error("NIP-46 auth: Invalid event kind", authEvent.kind);
+            return null;
+          }
+
+          if (authEvent.pubkey !== credentials.pubkey) {
+            console.error("NIP-46 auth: Pubkey mismatch");
+            return null;
+          }
+
+          if (!/^[0-9a-f]{64}$/i.test(credentials.pubkey)) {
+            console.error("NIP-46 auth: Invalid pubkey format");
+            return null;
+          }
+
+          const now = Math.floor(Date.now() / 1000);
+          const eventAge = Math.abs(now - authEvent.created_at);
+          const MAX_AGE = 300;
+          
+          if (eventAge > MAX_AGE) {
+            console.error("NIP-46 auth: Event too old or in future");
+            return null;
+          }
+
+          let computedId: string;
+          try {
+            computedId = getEventHash(authEvent);
+          } catch (error) {
+            console.error("NIP-46 auth: Failed to compute event hash", error);
+            return null;
+          }
+
+          if (computedId !== authEvent.id) {
+            console.error("NIP-46 auth: Event ID mismatch");
+            return null;
+          }
+
+          let isValidSignature: boolean;
+          try {
+            isValidSignature = verifyEvent(authEvent);
+          } catch (error) {
+            console.error("NIP-46 auth: Signature verification failed", error);
+            return null;
+          }
+
+          if (!isValidSignature) {
+            console.error("NIP-46 auth: Invalid signature");
+            return null;
+          }
+
+          let user = await db.user.findUnique({
+            where: { pubkey: credentials.pubkey },
+          });
+
+          if (!user) {
+            const npub = nip19.npubEncode(credentials.pubkey);
+            const userCount = await db.user.count();
+            const isFirstUser = userCount === 0;
+            const isConfiguredAdmin = npub === env.ADMIN_NPUB;
+            const isAdmin = isFirstUser || isConfiguredAdmin;
+            
+            user = await db.user.create({
+              data: {
+                pubkey: credentials.pubkey,
+                npub,
+                isAdmin,
+                whitelistStatus: isAdmin ? "ACTIVE" : "PENDING",
+                inviteQuota: isAdmin ? 999 : 5,
+              },
+            });
+            
+            console.log(`NIP-46 auth: New user created - ${npub.substring(0, 12)}...`);
+          }
+
+          return {
+            id: String(user.id),
+            pubkey: user.pubkey,
+            npub: user.npub,
+            isAdmin: user.isAdmin,
+            whitelistStatus: user.whitelistStatus,
+            inviteQuota: user.inviteQuota,
+            invitesUsed: user.invitesUsed,
+            invitePrivilegesSuspended: user.invitePrivilegesSuspended,
+          };
+        } catch (error) {
+          console.error("NIP-46 auth: Unexpected error", error);
+          return null;
+        }
+      },
+    }),
+    CredentialsProvider({
       id: "nip07",
       name: "Nostr Extension (NIP-07)",
       credentials: {
