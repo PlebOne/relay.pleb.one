@@ -30,90 +30,134 @@ export default function LoginPage() {
   const [isNip46Pending, startNip46Auth] = useTransition();
   const [isCredentialsPending, startCredentialsAuth] = useTransition();
 
+  // Wait for NIP-07 extension to be ready (handles race condition with extension loading)
+  const waitForExtension = async (maxAttempts = 10, delayMs = 100): Promise<boolean> => {
+    for (let i = 0; i < maxAttempts; i++) {
+      if (typeof window !== "undefined" && window.nostr) {
+        try {
+          // Test that extension is actually functional
+          await window.nostr.getPublicKey();
+          return true;
+        } catch {
+          // Extension exists but might not be ready or user hasn't unlocked
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+    return false;
+  };
+
   const handleNip07Login = () => {
     startNip07Auth(async () => {
       setNip07Error(null);
       setMessage(null);
 
-      try {
-        // Check if extension exists
-        if (!window.nostr) {
-          setNip07Error("NIP-07 extension not detected. Please install a Nostr extension (Alby, nos2x, Flamingo) and reload the page.");
-          return;
-        }
+      // Wait for extension to be ready (up to 1 second)
+      setMessage("Checking for NIP-07 extension...");
+      const extensionReady = await waitForExtension();
+      
+      if (!extensionReady) {
+        setNip07Error("NIP-07 extension not detected. Please install a Nostr extension (Alby, nos2x, Flamingo) and reload the page.");
+        return;
+      }
 
-        // Step 1: Get public key from extension
-        setMessage("Requesting public key...");
-        const pubkey = await window.nostr.getPublicKey();
-        
-        // Validate pubkey format
-        if (!pubkey || typeof pubkey !== "string" || !/^[0-9a-f]{64}$/i.test(pubkey)) {
-          throw new Error("Invalid public key returned from extension");
-        }
+      // Retry logic - up to 3 attempts
+      let retries = 0;
+      const maxRetries = 2;
 
-        // Step 2: Create authentication event for signing
-        setMessage("Creating authentication event...");
-        const eventTemplate: NostrEventTemplate = {
-          kind: AUTH_KIND,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [
-            ["relay", "wss://relay.pleb.one"],
-            ["challenge", crypto.randomUUID()],
-          ],
-          content: "Login to relay.pleb.one",
-        };
-
-        // Step 3: Request signature from extension
-        setMessage("Waiting for signature approval...");
-        const signedEvent = await window.nostr.signEvent(eventTemplate);
-        
-        // Validate signed event
-        if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
-          throw new Error("Invalid signed event from extension");
-        }
-
-        // Verify pubkey consistency
-        if (signedEvent.pubkey !== pubkey) {
-          throw new Error("Public key mismatch - possible security issue");
-        }
-
-        // Step 4: Submit to server
-        setMessage("Authenticating with server...");
-        const result = await signIn("nip07", {
-          pubkey: signedEvent.pubkey,
-          event: JSON.stringify(signedEvent),
-          redirect: false,
-        });
-
-        if (result?.error) {
-          throw new Error(result.error === "CredentialsSignin" 
-            ? "Authentication rejected by server" 
-            : result.error);
-        }
-
-        if (!result?.ok) {
-          throw new Error("Authentication failed");
-        }
-
-        // Success
-        setMessage("✓ Login successful");
-        router.push("/dashboard");
-
-      } catch (error) {
-        console.error("NIP-07 login error:", error);
-        
-        if (error instanceof Error) {
-          const msg = error.message.toLowerCase();
+      while (retries <= maxRetries) {
+        try {
+          // Step 1: Get public key from extension with timeout
+          setMessage("Requesting public key...");
+          const pubkeyPromise = window.nostr!.getPublicKey();
+          const pubkeyTimeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error("Extension timeout - getPublicKey took too long")), 10000)
+          );
+          const pubkey = await Promise.race([pubkeyPromise, pubkeyTimeoutPromise]);
           
-          if (msg.includes("user rejected") || msg.includes("user denied") || msg.includes("cancel")) {
-            setNip07Error("You cancelled the request. Please try again and approve the signature.");
-          } else if (msg.includes("timeout")) {
-            setNip07Error("Request timed out. Please ensure your extension is unlocked and try again.");
-          } else {
-            setNip07Error(error.message);
+          // Validate pubkey format
+          if (!pubkey || typeof pubkey !== "string" || !/^[0-9a-f]{64}$/i.test(pubkey)) {
+            throw new Error("Invalid public key returned from extension");
           }
-        } else {
-          setNip07Error("Login failed. Please try again.");
+
+          // Step 2: Create authentication event for signing
+          setMessage("Creating authentication event...");
+          const eventTemplate: NostrEventTemplate = {
+            kind: AUTH_KIND,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [
+              ["relay", "wss://relay.pleb.one"],
+              ["challenge", crypto.randomUUID()],
+            ],
+            content: "Login to relay.pleb.one",
+          };
+
+          // Step 3: Request signature from extension with timeout (30s for user interaction)
+          setMessage("Waiting for signature approval...");
+          const signEventPromise = window.nostr!.signEvent(eventTemplate);
+          const signTimeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error("Extension timeout - signing took too long")), 30000)
+          );
+          const signedEvent = await Promise.race([signEventPromise, signTimeoutPromise]);
+          
+          // Validate signed event structure
+          if (!signedEvent?.id || !signedEvent?.sig || !signedEvent?.pubkey) {
+            throw new Error("Invalid signed event from extension");
+          }
+
+          // Verify pubkey consistency
+          if (signedEvent.pubkey !== pubkey) {
+            throw new Error("Public key mismatch - possible security issue");
+          }
+
+          // Step 4: Submit to server
+          setMessage("Authenticating with server...");
+          const result = await signIn("nip07", {
+            pubkey: signedEvent.pubkey,
+            event: JSON.stringify(signedEvent),
+            redirect: false,
+          });
+
+          if (result?.error) {
+            throw new Error(result.error === "CredentialsSignin" 
+              ? "Authentication rejected by server" 
+              : result.error);
+          }
+
+          if (!result?.ok) {
+            throw new Error("Authentication failed");
+          }
+
+          // Success - break out of retry loop
+          setMessage("✓ Login successful");
+          router.push("/dashboard");
+          return;
+
+        } catch (error) {
+          retries++;
+          console.error(`NIP-07 login attempt ${retries} failed:`, error);
+          
+          // If we've exhausted retries, show error
+          if (retries > maxRetries) {
+            if (error instanceof Error) {
+              const msg = error.message.toLowerCase();
+              
+              if (msg.includes("user rejected") || msg.includes("user denied") || msg.includes("cancel")) {
+                setNip07Error("You cancelled the request. Please try again and approve the signature.");
+              } else if (msg.includes("timeout")) {
+                setNip07Error("Extension took too long to respond. Please check your extension and try again.");
+              } else {
+                setNip07Error(error.message);
+              }
+            } else {
+              setNip07Error("Login failed after multiple attempts. Please try again.");
+            }
+            return;
+          }
+
+          // Wait before retry (exponential backoff: 1s, 2s)
+          setMessage(`Retrying (${retries}/${maxRetries})...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         }
       }
     });
