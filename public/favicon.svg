@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" fill="#000000"/>
+  <g fill="#00ff41" opacity="0.9">
+    <!-- Lightning bolt / relay symbol -->
+    <path d="M32 8 L38 28 L44 28 L28 56 L26 36 L20 36 Z"/>
+  </g>
+  <g fill="#00ff41" opacity="0.3">
+    <!-- Matrix rain effect dots -->
+    <circle cx="12" cy="12" r="1.5"/>
+    <circle cx="18" cy="8" r="1"/>
+    <circle cx="46" cy="14" r="1.5"/>
+    <circle cx="52" cy="10" r="1"/>
+    <circle cx="14" cy="52" r="1"/>
+    <circle cx="50" cy="54" r="1.5"/>
+  </g>
+</svg>
