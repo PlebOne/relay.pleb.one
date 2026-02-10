@@ -105,9 +105,22 @@ export const authOptions: NextAuthOptions = {
         try {
           let authEvent: Event;
           try {
-            authEvent = JSON.parse(credentials.event) as Event;
+            // Handle both already-parsed objects and JSON strings
+            if (typeof credentials.event === 'string') {
+              authEvent = JSON.parse(credentials.event) as Event;
+            } else if (typeof credentials.event === 'object') {
+              authEvent = credentials.event as Event;
+            } else {
+              console.error("NIP-46 auth: Invalid event format - not string or object");
+              return null;
+            }
           } catch (parseError) {
-            console.error("NIP-46 auth: Invalid JSON", parseError);
+            console.error("NIP-46 auth: JSON parse failed", {
+              error: parseError instanceof Error ? parseError.message : String(parseError),
+              eventPreview: typeof credentials.event === 'string' 
+                ? credentials.event.substring(0, 100) 
+                : typeof credentials.event
+            });
             return null;
           }
 
@@ -225,9 +238,22 @@ export const authOptions: NextAuthOptions = {
           // Parse and validate the signed event
           let authEvent: Event;
           try {
-            authEvent = JSON.parse(credentials.event) as Event;
+            // Handle both already-parsed objects and JSON strings
+            if (typeof credentials.event === 'string') {
+              authEvent = JSON.parse(credentials.event) as Event;
+            } else if (typeof credentials.event === 'object') {
+              authEvent = credentials.event as Event;
+            } else {
+              console.error("NIP-07 auth: Invalid event format - not string or object");
+              return null;
+            }
           } catch (parseError) {
-            console.error("NIP-07 auth: Invalid JSON", parseError);
+            console.error("NIP-07 auth: JSON parse failed", {
+              error: parseError instanceof Error ? parseError.message : String(parseError),
+              eventPreview: typeof credentials.event === 'string' 
+                ? credentials.event.substring(0, 100) 
+                : typeof credentials.event
+            });
             return null;
           }
 

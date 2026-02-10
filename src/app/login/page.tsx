@@ -112,26 +112,40 @@ export default function LoginPage() {
 
           // Step 4: Submit to server
           setMessage("Authenticating with server...");
+          
           const result = await signIn("nip07", {
             pubkey: signedEvent.pubkey,
             event: JSON.stringify(signedEvent),
+            callbackUrl: "/dashboard",
             redirect: false,
           });
 
-          if (result?.error) {
+          // Handle the response carefully
+          if (!result) {
+            throw new Error("No response from server");
+          }
+
+          if (result.error) {
             throw new Error(result.error === "CredentialsSignin" 
               ? "Authentication rejected by server" 
               : result.error);
           }
 
-          if (!result?.ok) {
-            throw new Error("Authentication failed");
+          // Check if authentication was successful
+          if (result.ok && result.url) {
+            setMessage("✓ Login successful");
+            router.push(result.url);
+            return;
           }
 
-          // Success - break out of retry loop
-          setMessage("✓ Login successful");
-          router.push("/dashboard");
-          return;
+          if (result.ok) {
+            setMessage("✓ Login successful");
+            router.push("/dashboard");
+            return;
+          }
+
+          throw new Error("Authentication failed");
+
 
         } catch (error) {
           retries++;
@@ -217,9 +231,11 @@ export default function LoginPage() {
         }
 
         setMessage("Authenticating...");
+        
         const result = await signIn("nip46", {
           pubkey: signedEvent.pubkey,
           event: JSON.stringify(signedEvent),
+          callbackUrl: "/dashboard",
           redirect: false,
         });
 
@@ -233,12 +249,19 @@ export default function LoginPage() {
             : result.error);
         }
 
-        if (!result.ok) {
-          throw new Error("Authentication rejected by server");
+        if (result.ok && result.url) {
+          setMessage("✓ Authenticated successfully");
+          router.push(result.url);
+          return;
         }
 
-        setMessage("✓ Authenticated successfully");
-        router.push("/dashboard");
+        if (result.ok) {
+          setMessage("✓ Authenticated successfully");
+          router.push("/dashboard");
+          return;
+        }
+
+        throw new Error("Authentication rejected by server");
 
       } catch (error) {
         console.error("NIP-46 auth error:", error);
