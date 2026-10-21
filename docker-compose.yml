@@ -9,8 +9,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-relay_password_change_me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Loopback only (host-side psql / prisma db push). Other services use the internal network.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U relay_user -d relay_pleb_one"]
@@ -22,11 +23,14 @@ services:
   redis:
     image: redis:7-alpine
     container_name: relay-redis
-    ports:
-      - "6379:6379"
+    # Not published; app and relay reach it on the internal network.
+    # Optional auth: set REDIS_PASSWORD in .env to enable requirepass.
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: ["sh", "-c", "exec redis-server $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+--no-auth-warning -a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -48,6 +52,7 @@ services:
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://relay.pleb.one}
       # Resources dashboard tab (see DEPLOYMENT.md, "Resources view")
       - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - HOST_PROC_PATH=/host/proc
       - HOST_DISK_PATH=/host/pgdata
       - RELAY_STATS_URL=http://relay:3002/stats
@@ -56,8 +61,9 @@ services:
       - /proc:/host/proc:ro
       # Only statfs() is used on this path (disk used/free); the app user cannot read the Postgres files.
       - postgres_data:/host/pgdata:ro
+    # Loopback only; Caddy reaches app:3000 on the internal network.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -79,13 +85,15 @@ services:
     environment:
       - DATABASE_URL=postgresql://relay_user:${DB_PASSWORD}@postgres:5432/relay_pleb_one
       - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - RELAY_PORT=3001
       - RUST_LOG=info,relay_rs=debug
       # Internal stats listener (connection count) for the app's Resources tab.
       # Not published below and not routed by Caddy.
       - STATS_PORT=3002
+    # Loopback only; Caddy reaches relay:3001 on the internal network.
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     depends_on:
       postgres:
         condition: service_healthy

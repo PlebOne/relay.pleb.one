@@ -299,3 +299,25 @@ If a mount is missing (e.g. local `npm run dev`) those fields show as
 
 No database migration is needed. Deploy with
 `docker compose up -d --build app relay`.
+
+## Published ports and Redis password
+
+`docker-compose.yml` no longer publishes service ports on all addresses.
+Caddy reaches `app:3000` and `relay:3001` over the internal `relay-network`.
+
+| Service | Before | Now |
+| --- | --- | --- |
+| postgres | `5432:5432` | `127.0.0.1:5432:5432` (host-side `psql` / `npm run db:push`) |
+| redis | `6379:6379` | not published |
+| app | `3000:3000` | `127.0.0.1:3000:3000` |
+| relay | `3001:3001` | `127.0.0.1:3001:3001` |
+| relay stats | n/a | `3002`, internal only |
+
+Only Caddy's 80/443 are public. Anything that used to connect to these ports
+from another machine has to go through SSH port forwarding instead.
+
+Optional Redis auth: set `REDIS_PASSWORD` in `.env`. Redis then starts with
+`--requirepass`, the healthcheck authenticates, and the app and relay read the
+same variable (it overrides any password in `REDIS_URL`). Leave it unset or
+empty to keep Redis without auth. Changing it requires recreating the
+containers: `docker compose up -d --force-recreate redis app relay`.

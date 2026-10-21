@@ -71,7 +71,19 @@ async fn main() {
 
     // Initialize Redis connection pool
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
-    let redis_pool = match RedisConfig::from_url(&redis_url).create_pool(Some(Runtime::Tokio1)) {
+    // REDIS_PASSWORD (optional) overrides any password in REDIS_URL.
+    let redis_config = match redis::IntoConnectionInfo::into_connection_info(redis_url.as_str()) {
+        Ok(mut info) => {
+            if let Ok(password) = std::env::var("REDIS_PASSWORD") {
+                if !password.is_empty() {
+                    info.redis.password = Some(password);
+                }
+            }
+            RedisConfig::from_connection_info(info)
+        }
+        Err(_) => RedisConfig::from_url(&redis_url),
+    };
+    let redis_pool = match redis_config.create_pool(Some(Runtime::Tokio1)) {
         Ok(pool) => {
             info!("Redis connection pool initialized");
             Some(pool)
