@@ -5,7 +5,7 @@ import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cyphe
 import { SiteHeader } from "@/components/layout/site-header";
 
 export default function SupportPage() {
-  const btcAddress = "bc1q9a4hcjpk3v3297t4dvhamg5gjj7dxc0nq9gf5l";
+  const btcAddress = "bc1qs3q0k6lyxqj9ma4p0j8p0eac3j8vpcwla2x4zz";
   const lnAddress = "plebone@rizful.com";
 
   const copyToClipboard = (text: string) => {
