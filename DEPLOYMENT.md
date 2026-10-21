@@ -266,3 +266,36 @@ If you encounter issues:
 - [NIP-05 Specification](https://github.com/nostr-protocol/nips/blob/master/05.md)
 - [Caddy Documentation](https://caddyserver.com/docs/)
 - [Next.js API Routes](https://nextjs.org/docs/app/building-your-application/routing/route-handlers)
+
+## Resources view (dashboard)
+
+The dashboard has a **Resources** tab. Admins see host RAM/swap, data-disk
+usage, load average and cores, network totals/rate, host uptime, service
+health, Postgres size and event count, Redis memory, relay connection count
+and TLS expiry for the relay/NIP-05 domains. Other logged-in members see only
+status (healthy/degraded), uptime, disk % used and events stored. Nothing is
+exposed on public routes (`/api/health` is unchanged).
+
+Data sources (all read-only, no Docker socket):
+
+| Source | Mount / setting | Used for |
+| --- | --- | --- |
+| Host `/proc` | `/proc:/host/proc:ro` on `app` (`HOST_PROC_PATH`) | meminfo, loadavg, uptime, CPU count, `1/net/dev` (host network namespace) |
+| Postgres volume | `postgres_data:/host/pgdata:ro` on `app` (`HOST_DISK_PATH`) | `statfs()` only, for disk used/free/total. The app user cannot read the Postgres files (0700, uid 70). |
+| Postgres | existing `DATABASE_URL` | `pg_database_size()`, event count, `SELECT 1` health |
+| Redis | `REDIS_URL` on `app` | `INFO memory`, `PING` health, 24h history list |
+| Relay | `STATS_PORT=3002` on `relay`, read via `RELAY_STATS_URL` | open WebSocket connections. Port 3002 is not published and not routed by Caddy. |
+| Relay, Caddy | TCP connect to `relay:3001`, `caddy:80` | service health |
+| TLS | handshake to each domain on :443, cached 6h | certificate expiry |
+
+History: when Redis is reachable the app samples once a minute into the
+capped Redis list `resources:history` (1440 entries, 25h TTL, ~250 KB) and the
+tab draws inline SVG sparklines. Set `RESOURCES_HISTORY=0` on `app` to turn
+sampling off.
+
+If a mount is missing (e.g. local `npm run dev`) those fields show as
+"unavailable". For local testing, `HOST_PROC_PATH=/proc` and
+`HOST_DISK_PATH=.` work on a Linux host.
+
+No database migration is needed. Deploy with
+`docker compose up -d --build app relay`.

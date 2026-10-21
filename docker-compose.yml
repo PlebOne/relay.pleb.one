@@ -23,7 +23,7 @@ services:
   redis:
     image: redis:7.4.11-alpine3.21
     container_name: relay-redis
-    # Not published; the relay reaches it on the internal network.
+    # Not published; app and relay reach it on the internal network.
     # Optional auth: set REDIS_PASSWORD in .env to enable requirepass.
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
@@ -50,6 +50,17 @@ services:
       - RELAY_PORT=3001
       - NEXT_PUBLIC_RELAY_URL=${NEXT_PUBLIC_RELAY_URL:-wss://relay.pleb.one}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://relay.pleb.one}
+      # Resources dashboard tab (see DEPLOYMENT.md, "Resources view")
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - HOST_PROC_PATH=/host/proc
+      - HOST_DISK_PATH=/host/pgdata
+      - RELAY_STATS_URL=http://relay:3002/stats
+    volumes:
+      # Read-only host metrics for the Resources tab. No Docker socket.
+      - /proc:/host/proc:ro
+      # Only statfs() is used on this path (disk used/free); the app user cannot read the Postgres files.
+      - postgres_data:/host/pgdata:ro
     # Loopback only; Caddy reaches app:3000 on the internal network.
     ports:
       - "127.0.0.1:3000:3000"
@@ -78,6 +89,9 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - RELAY_PORT=3001
       - RUST_LOG=info,relay_rs=debug
+      # Internal stats listener (connection count) for the app's Resources tab.
+      # Not published below and not routed by Caddy.
+      - STATS_PORT=3002
     # Loopback only; Caddy reaches relay:3001 on the internal network.
     ports:
       - "127.0.0.1:3001:3001"

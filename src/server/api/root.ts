@@ -4,6 +4,7 @@ import { paymentRouter } from "./routers/payment";
 import { relayRouter } from "./routers/relay";
 import { adminRouter } from "./routers/admin";
 import { messageRouter } from "./routers/message";
+import { resourcesRouter } from "./routers/resources";
 
 /**
  * This is the primary router for your server.
@@ -16,6 +17,7 @@ export const appRouter = createTRPCRouter({
   relay: relayRouter,
   admin: adminRouter,
   message: messageRouter,
+  resources: resourcesRouter,
 });
 
 // export type definition of API
