@@ -14,8 +14,11 @@ use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc},
-    time::Duration,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
 };
 use tokio::sync::broadcast;
 use tracing::{error, info, warn, debug};
@@ -35,6 +38,24 @@ struct AppState {
     db: Pool<Postgres>,
     tx: broadcast::Sender<Event>,
     redis: Option<RedisPool>,
+    connections: Arc<AtomicUsize>,
+    started_at: Instant,
+}
+
+/// Decrements the open-connection counter when a socket handler exits.
+struct ConnectionGuard(Arc<AtomicUsize>);
+
+impl ConnectionGuard {
+    fn new(counter: Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, Ordering::Relaxed);
+        Self(counter)
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 #[tokio::main]
@@ -63,7 +84,13 @@ async fn main() {
 
     let (tx, _rx) = broadcast::channel(1000); // Increased buffer size
 
-    let state = Arc::new(AppState { db: pool, tx, redis: redis_pool });
+    let state = Arc::new(AppState {
+        db: pool,
+        tx,
+        redis: redis_pool,
+        connections: Arc::new(AtomicUsize::new(0)),
+        started_at: Instant::now(),
+    });
 
     // NIP-66: Relay Monitor Task
     let monitor_state = state.clone();
@@ -125,6 +152,32 @@ async fn main() {
         }
     });
 
+    // Internal stats listener (connection count, uptime) for the dashboard's
+    // Resources view. Separate port so it is never routed by Caddy and is not
+    // published by docker compose.
+    let stats_port = std::env::var("STATS_PORT").unwrap_or_else(|_| "3002".to_string());
+    let stats_app = Router::new()
+        .route("/stats", get(stats_handler))
+        .with_state(state.clone());
+    tokio::spawn(async move {
+        let addr: SocketAddr = match format!("0.0.0.0:{}", stats_port).parse() {
+            Ok(addr) => addr,
+            Err(_) => {
+                warn!("Invalid STATS_PORT, stats listener disabled");
+                return;
+            }
+        };
+        match tokio::net::TcpListener::bind(addr).await {
+            Ok(listener) => {
+                info!("Stats listening on {}", addr);
+                if let Err(e) = axum::serve(listener, stats_app).await {
+                    warn!("Stats listener stopped: {}", e);
+                }
+            }
+            Err(e) => warn!("Failed to bind stats listener: {}", e),
+        }
+    });
+
     let app = Router::new()
         .route("/", get(handler))
         .layer(CompressionLayer::new()) // Enable gzip/br/deflate compression for HTTP responses
@@ -162,7 +215,15 @@ async fn handler(
     "Welcome to Relay Pleb One (Rust Edition)".into_response()
 }
 
+async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "connections": state.connections.load(Ordering::Relaxed),
+        "uptime_seconds": state.started_at.elapsed().as_secs(),
+    }))
+}
+
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
+    let _connection = ConnectionGuard::new(state.connections.clone());
     let (mut sender, mut receiver) = socket.split();
     let mut subscriptions: HashMap<String, Vec<Filter>> = HashMap::new();
     let mut broadcast_rx = state.tx.subscribe();

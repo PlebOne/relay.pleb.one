@@ -46,6 +46,16 @@ services:
       - RELAY_PORT=3001
       - NEXT_PUBLIC_RELAY_URL=${NEXT_PUBLIC_RELAY_URL:-wss://relay.pleb.one}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://relay.pleb.one}
+      # Resources dashboard tab (see DEPLOYMENT.md, "Resources view")
+      - REDIS_URL=redis://redis:6379
+      - HOST_PROC_PATH=/host/proc
+      - HOST_DISK_PATH=/host/pgdata
+      - RELAY_STATS_URL=http://relay:3002/stats
+    volumes:
+      # Read-only host metrics for the Resources tab. No Docker socket.
+      - /proc:/host/proc:ro
+      # Only statfs() is used on this path (disk used/free); the app user cannot read the Postgres files.
+      - postgres_data:/host/pgdata:ro
     ports:
       - "3000:3000"
     depends_on:
@@ -71,6 +81,9 @@ services:
       - REDIS_URL=redis://redis:6379
       - RELAY_PORT=3001
       - RUST_LOG=info,relay_rs=debug
+      # Internal stats listener (connection count) for the app's Resources tab.
+      # Not published below and not routed by Caddy.
+      - STATS_PORT=3002
     ports:
       - "3001:3001"
     depends_on:
