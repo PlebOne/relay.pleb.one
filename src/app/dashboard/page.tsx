@@ -37,7 +37,7 @@ export default async function DashboardPage() {
       <MatrixRain />
       <div className="relative z-10 px-4 py-12">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
-          <header className="rounded-2xl border border-green-500/30 bg-black/70 p-6 shadow-xl shadow-green-500/10 backdrop-blur">
+          <header className="rounded-2xl border border-green-500/30 bg-black/70 p-6 shadow-xl shadow-green-500/10 backdrop-blur-sm">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-sm uppercase tracking-[0.4em] text-green-500/70">Relay Control Surface</p>

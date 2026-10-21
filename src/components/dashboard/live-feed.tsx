@@ -64,6 +64,26 @@ export function LiveFeed() {
   const poolRef = useRef<SimplePool | null>(null);
   const processedEvents = useRef<Set<string>>(new Set());
 
+  const fetchMetadata = async (pool: SimplePool, pubkey: string) => {
+    // Debounce or batch could be better, but simple for now
+    const event = await pool.get(METADATA_RELAYS, {
+      kinds: [0],
+      authors: [pubkey],
+    });
+
+    if (event) {
+      try {
+        const content = JSON.parse(event.content);
+        setMetadata((prev) => ({
+          ...prev,
+          [pubkey]: content,
+        }));
+      } catch (e) {
+        console.error("Failed to parse metadata for", pubkey);
+      }
+    }
+  };
+
   useEffect(() => {
     const pool = new SimplePool();
     poolRef.current = pool;
@@ -123,26 +143,6 @@ export function LiveFeed() {
     };
   }, []);
 
-  const fetchMetadata = async (pool: SimplePool, pubkey: string) => {
-    // Debounce or batch could be better, but simple for now
-    const event = await pool.get(METADATA_RELAYS, {
-      kinds: [0],
-      authors: [pubkey],
-    });
-
-    if (event) {
-      try {
-        const content = JSON.parse(event.content);
-        setMetadata((prev) => ({
-          ...prev,
-          [pubkey]: content,
-        }));
-      } catch (e) {
-        console.error("Failed to parse metadata for", pubkey);
-      }
-    }
-  };
-
   return (
     <TerminalWindow title={`relay-feed --live --source ${RELAY_URL}`}>
       <div className="mb-4 flex items-center justify-between text-xs font-mono">
@@ -178,7 +178,7 @@ export function LiveFeed() {
             >
               <div className="flex gap-4">
                 {/* Avatar */}
-                <div className="flex-shrink-0">
+                <div className="shrink-0">
                   {user.picture ? (
                     <img
                       src={user.picture}
@@ -217,7 +217,7 @@ export function LiveFeed() {
                     </span>
                   </header>
 
-                  <div className="mt-2 text-sm text-gray-200 whitespace-pre-wrap break-words leading-relaxed">
+                  <div className="mt-2 text-sm text-gray-200 whitespace-pre-wrap wrap-break-word leading-relaxed">
                     {text}
                   </div>
 

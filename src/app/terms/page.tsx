@@ -6,7 +6,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 
 export default function TermsPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
       <MatrixRain />
       <SiteHeader />
 
@@ -18,29 +18,29 @@ export default function TermsPage() {
                 <h1 className="text-3xl font-bold text-green-400 mb-6">Terms of Service</h1>
                 
                 <div className="space-y-4">
-                  <h2 className="text-xl font-bold text-green-400">1. The "Free Lunch" Clause</h2>
+                  <h2 className="text-xl font-bold text-green-400">1. The &quot;Free Lunch&quot; Clause</h2>
                   <p>
                     This is a free service. You are paying exactly 0 sats for it. As such, you are entitled to exactly 0 sats worth of refunds, guarantees, or emotional support if things go sideways. We try our best to keep the lights on, but if the server catches fire or gets eaten by a grue, we owe you nothing but a sad trombone sound effect.
                   </p>
                 </div>
 
                 <div className="space-y-4">
-                  <h2 className="text-xl font-bold text-green-400">2. The "Don't Be A Jerk" Rule</h2>
+                  <h2 className="text-xl font-bold text-green-400">2. The &quot;Don&apos;t Be A Jerk&quot; Rule</h2>
                   <p>
                     We run a Web of Trust system. If you act like a spam-bot, a scammer, or generally make the relay a miserable place for others, we will ban you. If you invite people who act like jerks, we might ban you too (or at least put you in timeout).
                   </p>
                   <p>
-                    "Free speech" does not mean "obligated to host your noise." This is a private relay. We reserve the right to refuse service to anyone, for any reason, or for no reason at all. Usually, it's because you were being a jerk.
+                    &quot;Free speech&quot; does not mean &quot;obligated to host your noise.&quot; This is a private relay. We reserve the right to refuse service to anyone, for any reason, or for no reason at all. Usually, it&apos;s because you were being a jerk.
                   </p>
                 </div>
 
                 <div className="space-y-4">
                   <h2 className="text-xl font-bold text-green-400">3. Content & Liability</h2>
                   <p>
-                    You are responsible for what you sign with your private key. We are just a dumb pipe (a relay) that moves JSON blobs from A to B. We don't endorse your content, we don't verify your content, and we certainly don't want to be sued for your content.
+                    You are responsible for what you sign with your private key. We are just a dumb pipe (a relay) that moves JSON blobs from A to B. We don&apos;t endorse your content, we don&apos;t verify your content, and we certainly don&apos;t want to be sued for your content.
                   </p>
                   <p>
-                    If you post illegal stuff, that's on you. Don't do that.
+                    If you post illegal stuff, that&apos;s on you. Don&apos;t do that.
                   </p>
                 </div>
 
@@ -54,13 +54,13 @@ export default function TermsPage() {
                 <div className="space-y-4">
                   <h2 className="text-xl font-bold text-green-400">5. Changes to Terms</h2>
                   <p>
-                    We might change these terms later. If we do, we'll probably just update this file. It's up to you to check back here and see if we've added a clause demanding your firstborn child (we won't, they eat too much).
+                    We might change these terms later. If we do, we&apos;ll probably just update this file. It&apos;s up to you to check back here and see if we&apos;ve added a clause demanding your firstborn child (we won&apos;t, they eat too much).
                   </p>
                 </div>
 
                 <div className="pt-8 border-t border-green-500/20">
                   <p className="text-xs text-gray-500">
-                    Last Updated: November 2025 (The "It works on my machine" Edition)
+                    Last Updated: November 2025 (The &quot;It works on my machine&quot; Edition)
                   </p>
                 </div>
               </div>

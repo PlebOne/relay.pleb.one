@@ -1,8 +1,12 @@
-FROM node:20-alpine AS base
+FROM node:24.22.1-trixie-slim AS base
+
+# OpenSSL for Prisma
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends openssl ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
 # Install dependencies based on the preferred package manager
@@ -27,14 +31,11 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 
-# Install OpenSSL for Prisma
-RUN apk add --no-cache openssl
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 
-ENV NODE_ENV production
-ENV NEXT_TELEMETRY_DISABLED 1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
+RUN groupadd --system --gid 1001 nodejs
+RUN useradd --system --uid 1001 --gid nodejs nextjs
 
 COPY --from=builder /app/public ./public
 
@@ -62,7 +63,11 @@ USER nextjs
 
 EXPOSE 3000
 
-ENV PORT 3000
-ENV HOSTNAME "0.0.0.0"
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+# The slim image has no curl/wget; use node itself
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
 
 CMD ["node", "server.js"]

@@ -53,9 +53,9 @@ export default function ReportPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
       {/* Header */}
-      <header className="border-b border-green-500/30 bg-black/80 backdrop-blur-sm relative z-10">
+      <header className="border-b border-green-500/30 bg-black/80 backdrop-blur-xs relative z-10">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
             <Link href="/" className="text-2xl font-bold text-green-400">
@@ -90,7 +90,7 @@ export default function ReportPage() {
                     Submit a user for investigation. Admins will review all reports and take appropriate action.
                     This does NOT automatically blacklist users.
                   </p>
-                  <div className="bg-yellow-900/20 border border-yellow-500/30 rounded p-4 mb-6">
+                  <div className="bg-yellow-900/20 border border-yellow-500/30 rounded-sm p-4 mb-6">
                     <p className="text-yellow-400 text-sm font-mono">
                       ⚠️ <strong>Note:</strong> False reports or abuse of this system may result in your own account
                       being flagged. Please only submit legitimate concerns with evidence.
@@ -99,7 +99,7 @@ export default function ReportPage() {
                 </div>
 
                 {submitStatus === "success" && (
-                  <div className="bg-green-900/20 border border-green-500/30 rounded p-4">
+                  <div className="bg-green-900/20 border border-green-500/30 rounded-sm p-4">
                     <p className="text-green-400 font-mono text-sm">
                       ✓ Report submitted successfully! Admins will review it shortly.
                     </p>
@@ -107,7 +107,7 @@ export default function ReportPage() {
                 )}
 
                 {submitStatus === "error" && (
-                  <div className="bg-red-900/20 border border-red-500/30 rounded p-4">
+                  <div className="bg-red-900/20 border border-red-500/30 rounded-sm p-4">
                     <p className="text-red-400 font-mono text-sm">
                       ✗ Error: {errorMessage}
                     </p>
@@ -125,7 +125,7 @@ export default function ReportPage() {
                       value={submitterNpub}
                       onChange={(e) => setSubmitterNpub(e.target.value)}
                       placeholder="npub1..."
-                      className="w-full bg-black/50 border border-green-500/30 rounded px-4 py-2 text-gray-300 font-mono text-sm focus:outline-none focus:border-green-500"
+                      className="w-full bg-black/50 border border-green-500/30 rounded-sm px-4 py-2 text-gray-300 font-mono text-sm focus:outline-hidden focus:border-green-500"
                     />
                     <p className="text-gray-500 text-xs font-mono mt-1">
                       Leave blank to submit anonymously
@@ -143,7 +143,7 @@ export default function ReportPage() {
                       onChange={(e) => setTargetNpub(e.target.value)}
                       placeholder="npub1..."
                       required
-                      className="w-full bg-black/50 border border-green-500/30 rounded px-4 py-2 text-gray-300 font-mono text-sm focus:outline-none focus:border-green-500"
+                      className="w-full bg-black/50 border border-green-500/30 rounded-sm px-4 py-2 text-gray-300 font-mono text-sm focus:outline-hidden focus:border-green-500"
                     />
                   </div>
 
@@ -159,7 +159,7 @@ export default function ReportPage() {
                       placeholder="e.g., Spam, Harassment, Illegal content..."
                       required
                       maxLength={200}
-                      className="w-full bg-black/50 border border-green-500/30 rounded px-4 py-2 text-gray-300 font-mono text-sm focus:outline-none focus:border-green-500"
+                      className="w-full bg-black/50 border border-green-500/30 rounded-sm px-4 py-2 text-gray-300 font-mono text-sm focus:outline-hidden focus:border-green-500"
                     />
                   </div>
 
@@ -175,7 +175,7 @@ export default function ReportPage() {
                       required
                       rows={6}
                       maxLength={2000}
-                      className="w-full bg-black/50 border border-green-500/30 rounded px-4 py-2 text-gray-300 font-mono text-sm focus:outline-none focus:border-green-500 resize-none"
+                      className="w-full bg-black/50 border border-green-500/30 rounded-sm px-4 py-2 text-gray-300 font-mono text-sm focus:outline-hidden focus:border-green-500 resize-none"
                     />
                     <p className="text-gray-500 text-xs font-mono mt-1">
                       {evidence.length}/2000 characters

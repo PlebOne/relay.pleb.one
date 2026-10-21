@@ -39,12 +39,12 @@ export function WhitelistInvitePanel() {
   );
 
   // Auto-fill display name if found and empty
-  useMemo(() => {
-    if (previewQuery.data && !displayName) {
-      const name = previewQuery.data.displayName || previewQuery.data.name;
-      if (name) setDisplayName(name);
-    }
-  }, [previewQuery.data, displayName]);
+  const [autofillSource, setAutofillSource] = useState<typeof previewQuery.data>();
+  if (previewQuery.data && !displayName && previewQuery.data !== autofillSource) {
+    setAutofillSource(previewQuery.data);
+    const name = previewQuery.data.displayName || previewQuery.data.name;
+    if (name) setDisplayName(name);
+  }
 
   const whitelistQuery = api.user.getWhitelistStatus.useQuery();
   const inviteMutation = api.user.inviteToWhitelist.useMutation({
@@ -126,14 +126,14 @@ export function WhitelistInvitePanel() {
                 Invite a friend via npub
               </label>
               <input
-                className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                 placeholder="npub1..."
                 value={npub}
                 onChange={handleNpubChange}
               />
               {previewQuery.isLoading && <p className="mt-1 text-xs text-gray-500">Looking up profile...</p>}
               {previewQuery.data && (
-                <div className="mt-2 flex items-center gap-2 rounded border border-green-500/20 bg-green-900/10 p-2">
+                <div className="mt-2 flex items-center gap-2 rounded-sm border border-green-500/20 bg-green-900/10 p-2">
                   {previewQuery.data.picture && (
                     <img src={previewQuery.data.picture} alt="" className="h-8 w-8 rounded-full" />
                   )}
@@ -149,7 +149,7 @@ export function WhitelistInvitePanel() {
                     Optional name
                   </label>
                   <input
-                    className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                    className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                     placeholder="Display name"
                     value={displayName}
                     onChange={(e) => setDisplayName(e.target.value)}
@@ -160,7 +160,7 @@ export function WhitelistInvitePanel() {
                     Optional note
                   </label>
                   <input
-                    className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                    className="w-full rounded-md border border-green-500/30 bg-black/60 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                     placeholder="For admin context"
                     value={note}
                     onChange={(e) => setNote(e.target.value)}

@@ -160,12 +160,12 @@ export function RelayInfoPanel() {
         <h3 className="text-xl font-semibold text-green-400 mb-4">🔧 Test Your Connection</h3>
         <div className="space-y-3">
           <p className="text-sm text-gray-300">
-            After adding the relay to your client, verify it's working:
+            After adding the relay to your client, verify it&apos;s working:
           </p>
           <ol className="space-y-2 text-sm text-gray-300">
             <li className="flex items-start gap-2">
               <span className="text-green-400 font-bold">1.</span>
-              <span>Check your client's relay list - the relay should show as <span className="text-green-400">Connected</span></span>
+              <span>Check your client&apos;s relay list - the relay should show as <span className="text-green-400">Connected</span></span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-green-400 font-bold">2.</span>
