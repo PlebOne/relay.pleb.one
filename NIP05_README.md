@@ -2,20 +2,30 @@
 
 ## 📋 What Was Implemented
 
-A complete, production-ready NIP-05 verification system that allows your relay users to have verified `name@pleb.one` addresses.
+A complete, production-ready NIP-05 verification system that allows your relay users to have verified NIP-05 addresses on one of these domains, picked per user in the dashboard:
+
+- `relay.pleb.one` (default; existing users stay here)
+- `id.pleb.one`
+- `me.pleb.one`
+- `nostr.pleb.one`
+- `based.pleb.one`
+
+Names are globally unique: `tim` can only belong to one user, on whichever domain they picked. The endpoint only answers for the user's chosen domain.
+
+> **Note (Oct 2026):** bare `pleb.one` is now a static GitHub Pages site and no longer serves NIP-05. Old `name@pleb.one` addresses stop verifying; users should update their profile once to `name@<their domain>`.
 
 ## 🎯 Quick Overview
 
 **User Experience:**
 1. User logs into dashboard
 2. Goes to "Identity" tab
-3. Enables NIP-05 and chooses a handle
+3. Enables NIP-05, chooses a handle and a domain
 4. Updates their Nostr profile
 5. Gets a verification checkmark ✓
 
 **Technical Flow:**
 ```
-Nostr Client → pleb.one → relay.pleb.one → Database → Response
+Nostr Client → <domain>/.well-known/nostr.json → Caddy (relay.pleb.one server) → app → Database → Response
 ```
 
 ## 📚 Documentation Files
@@ -42,19 +52,20 @@ Start here based on your needs:
 ## 🚀 Deploy Now (3 Commands)
 
 ```bash
-# 1. Apply database changes
+# 1. DNS: A records for id, me, nostr, based .pleb.one -> relay server IP
+
+# 2. Apply database changes (either one)
 npm run db:push
+# or: psql "$DATABASE_URL" -f scripts/add_nip05_domain_migration.sql
 
-# 2. Restart application
-docker-compose restart app
-
-# 3. Update pleb.one Caddyfile
-# (See Caddyfile.pleb.one.snippet for what to add)
+# 3. Rebuild/restart the app and reload Caddy (Caddyfile now has the subdomain block)
+docker-compose up -d --build app && docker-compose restart caddy
 ```
 
 Then test:
 ```bash
-curl "https://pleb.one/.well-known/nostr.json?name=test"
+curl "https://relay.pleb.one/.well-known/nostr.json?name=test"
+curl "https://id.pleb.one/.well-known/nostr.json?name=test"
 ```
 
 ## 📁 Key Files
@@ -66,11 +77,13 @@ curl "https://pleb.one/.well-known/nostr.json?name=test"
 - `prisma/schema.prisma` - Database schema
 
 ### Configuration
-- `Caddyfile` - relay.pleb.one config (already updated)
-- `Caddyfile.pleb.one.snippet` - Copy this to pleb.one server
+- `Caddyfile` - relay.pleb.one plus the id/me/nostr/based.pleb.one NIP-05 block
+- `Caddyfile.pleb.one.snippet` - retired (pleb.one is GitHub Pages now)
+- `src/lib/nip05-domains.ts` - the allowed domain list (shared by route, router, panel)
 
 ### Database
 - `scripts/add_nip05_migration.sql` - Migration SQL
+- `scripts/add_nip05_domain_migration.sql` - Adds the per-user domain column (idempotent)
 
 ### Scripts
 - `scripts/deploy-nip05.sh` - Automated deployment
@@ -81,13 +94,13 @@ After deployment, verify:
 
 1. **Endpoint works:**
    ```bash
-   curl "https://pleb.one/.well-known/nostr.json?name=test"
+   curl "https://relay.pleb.one/.well-known/nostr.json?name=test"
    # Should return: {"names":{}}
    ```
 
 2. **CORS headers present:**
    ```bash
-   curl -I "https://pleb.one/.well-known/nostr.json?name=test" | grep -i access
+   curl -I "https://relay.pleb.one/.well-known/nostr.json?name=test" | grep -i access
    # Should show: Access-Control-Allow-Origin: *
    ```
 
@@ -97,12 +110,12 @@ After deployment, verify:
 
 4. **User can enable NIP-05:**
    - Enable checkbox
-   - Enter a handle
+   - Enter a handle and pick a domain
    - Save successfully
 
 5. **Lookup returns pubkey:**
    ```bash
-   curl "https://pleb.one/.well-known/nostr.json?name=yourhandle"
+   curl "https://relay.pleb.one/.well-known/nostr.json?name=yourhandle"
    # Should return: {"names":{"yourhandle":"your_pubkey"}}
    ```
 
@@ -120,14 +133,16 @@ After deployment, verify:
 Share this with your users:
 
 ```
-🎉 Get Your Verified @pleb.one Address!
+🎉 Get Your Verified Nostr Address!
 
 1. Visit: https://relay.pleb.one/dashboard
 2. Click the "Identity" tab
 3. Enable NIP-05 verification
-4. Choose your unique handle
+4. Choose your unique handle and a domain (relay, id, me, nostr or based .pleb.one)
 5. Click "Save Settings"
-6. Update your Nostr profile with: yourhandle@pleb.one
+6. Update your Nostr profile with: yourhandle@yourdomain (e.g. yourhandle@id.pleb.one)
+
+Had yourhandle@pleb.one before? That no longer verifies; update your profile once.
 
 Most Nostr clients will show a verification checkmark ✓
 ```
@@ -182,4 +197,4 @@ See `DEPLOYMENT.md` for more troubleshooting.
 - Full guide: See `DEPLOYMENT.md`
 - Technical details: See `NIP05_IMPLEMENTATION.md`
 
-**Last Updated:** January 29, 2026
+**Last Updated:** October 21, 2026

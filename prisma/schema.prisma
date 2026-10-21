@@ -37,6 +37,7 @@ model User {
   invitedById     String?
   nip05Name       String? @unique
   nip05Enabled    Boolean @default(false)
+  nip05Domain     String  @default("relay.pleb.one")
   
   // Relations
   events        Event[]

@@ -1,7 +1,9 @@
 # NIP-05 Verification System Implementation
 
 ## Overview
-This implementation provides dynamic NIP-05 verification for relay users, allowing them to have verified `name@pleb.one` addresses.
+This implementation provides dynamic NIP-05 verification for relay users, allowing them to have verified `name@<domain>` addresses on one of `relay.pleb.one` (default), `id.pleb.one`, `me.pleb.one`, `nostr.pleb.one` or `based.pleb.one`. The list lives in `src/lib/nip05-domains.ts`.
+
+Bare `pleb.one` is a static GitHub Pages site and no longer serves NIP-05; old `name@pleb.one` addresses stop verifying.
 
 ## Architecture
 
@@ -9,6 +11,9 @@ This implementation provides dynamic NIP-05 verification for relay users, allowi
 Two new fields added to the `users` table:
 - `nip05_name` (TEXT, UNIQUE, INDEXED) - The user's chosen handle
 - `nip05_enabled` (BOOLEAN, DEFAULT false) - Whether NIP-05 is active
+- `nip05Domain` (TEXT, NOT NULL, DEFAULT 'relay.pleb.one') - Which domain the name is served on
+
+Names stay globally unique across all domains (one `tim`, on one domain).
 
 ### Backend Components
 
@@ -17,11 +22,13 @@ Two new fields added to the `users` table:
 
 Handles NIP-05 verification requests:
 - **Endpoint:** `GET /.well-known/nostr.json?name=<username>`
-- **Response:** `{"names": {"<username>": "<pubkey>"}}`
+- **Response:** `{"names": {"<username>": "<pubkey>"}, "relays": {"<pubkey>": ["wss://relay.pleb.one"]}}`
 - **Features:**
+  - Host-aware: uses the first `X-Forwarded-Host` value, else `Host` (lowercased, port stripped). Only the five NIP-05 domains are answered; any other host gets 404 `{"names":{}}`
+  - A name is returned only on the host matching the user's `nip05Domain`
   - CORS enabled (`Access-Control-Allow-Origin: *`)
   - Reserved name protection (admin, root, info, etc.)
-  - 1-hour cache headers
+  - 5-minute cache on hits (so domain switches take effect quickly)
   - Rate limiting ready
 
 #### 2. tRPC Procedures
@@ -29,7 +36,7 @@ Handles NIP-05 verification requests:
 
 Two new procedures:
 - `getNip05Settings` - Fetch current NIP-05 configuration
-- `updateNip05` - Update NIP-05 name and enabled status
+- `updateNip05` - Update NIP-05 name, domain (`z.enum` of the shared list) and enabled status
   - Validates name format (lowercase, alphanumeric, underscores)
   - Checks for reserved names
   - Ensures uniqueness
@@ -40,6 +47,7 @@ Two new procedures:
 User-facing panel in the dashboard:
 - Enable/disable toggle
 - Handle input with validation
+- Domain select (relay.pleb.one default)
 - Live preview of final address
 - Success/error messaging
 - Instructions for client configuration
@@ -61,29 +69,22 @@ handle /.well-known/nostr.json* {
 }
 ```
 
-### Production Setup (pleb.one)
-To enable NIP-05 on the main domain, add this to the pleb.one Caddyfile:
+### NIP-05 subdomains (id/me/nostr/based.pleb.one)
+The same Caddyfile has a block for the extra domains. They point (DNS A records) at the relay server:
 
 ```caddy
-pleb.one {
-    # Proxy NIP-05 lookups to the relay backend
-    handle /.well-known/nostr.json {
-        reverse_proxy https://relay.pleb.one {
-            header_up Host {upstream_hostport}
-        }
+id.pleb.one, me.pleb.one, nostr.pleb.one, based.pleb.one {
+    handle /.well-known/nostr.json* {
+        rewrite * /api{uri}
+        reverse_proxy app:3000
     }
-    
-    # Existing website config follows...
-    root * /var/www/html
-    file_server
+    handle {
+        redir https://pleb.one{uri}
+    }
 }
 ```
 
-This configuration:
-1. Intercepts NIP-05 requests on `pleb.one`
-2. Forwards them to `relay.pleb.one`
-3. The relay server handles the database lookup
-4. Returns the response through the proxy chain
+Caddy passes the client `Host` through unchanged and sets `X-Forwarded-Host`, so the app sees the subdomain and answers for it. `Caddyfile.pleb.one.snippet` is retired; there is no pleb.one block.
 
 ## Database Migration
 
@@ -92,6 +93,7 @@ Apply the migration when the database is available:
 ```bash
 cd /home/plebadmin/relay.pleb.one
 psql $DATABASE_URL -f scripts/add_nip05_migration.sql
+psql $DATABASE_URL -f scripts/add_nip05_domain_migration.sql
 ```
 
 Or use Prisma:
@@ -119,9 +121,9 @@ The endpoint includes proper headers for client-side caching and is ready for ra
 
 1. User navigates to Dashboard → Identity tab
 2. Enables NIP-05 verification
-3. Chooses a unique handle (e.g., "alice")
+3. Chooses a unique handle (e.g., "alice") and a domain (e.g., `id.pleb.one`)
 4. Saves settings
-5. Address becomes active: `alice@pleb.one`
+5. Address becomes active: `alice@id.pleb.one`
 6. User updates their Nostr profile with the NIP-05 field
 7. Nostr clients verify and display checkmark
 

@@ -3,6 +3,7 @@ import { nip19 } from "nostr-tools";
 import { createTRPCRouter, protectedProcedure } from "@/server/api/trpc";
 import { TRPCError } from "@trpc/server";
 import { fetchProfileMetadata } from "@/lib/nostr";
+import { DEFAULT_NIP05_DOMAIN, NIP05_DOMAINS } from "@/lib/nip05-domains";
 
 /**
  * User management router
@@ -262,12 +263,14 @@ export const userRouter = createTRPCRouter({
       select: {
         nip05Name: true,
         nip05Enabled: true,
+        nip05Domain: true,
       },
     });
 
     return {
       name: user?.nip05Name ?? null,
       enabled: user?.nip05Enabled ?? false,
+      domain: user?.nip05Domain ?? DEFAULT_NIP05_DOMAIN,
     };
   }),
 
@@ -276,6 +279,7 @@ export const userRouter = createTRPCRouter({
       z.object({
         name: z.string().min(1).max(30).regex(/^[a-z0-9_]+$/).optional(),
         enabled: z.boolean(),
+        domain: z.enum(NIP05_DOMAINS).default(DEFAULT_NIP05_DOMAIN),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -311,6 +315,7 @@ export const userRouter = createTRPCRouter({
         data: {
           nip05Name: input.name?.toLowerCase().trim() ?? null,
           nip05Enabled: input.enabled,
+          nip05Domain: input.domain,
         },
       });
     }),
