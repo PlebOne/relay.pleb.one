@@ -78,9 +78,9 @@ export default function RequestInvitePage() {
   const isSubmitting = submitStatus === "submitting";
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
       <MatrixRain />
-      <header className="border-b border-green-500/30 bg-black/80 backdrop-blur-sm relative z-10">
+      <header className="border-b border-green-500/30 bg-black/80 backdrop-blur-xs relative z-10">
         <div className="container mx-auto px-4 py-6">
           <div className="flex items-center justify-between">
             <Link href="/" className="text-2xl font-bold text-green-400">
@@ -145,7 +145,7 @@ export default function RequestInvitePage() {
                       value={npub}
                       onChange={(event) => setNpub(event.target.value)}
                       placeholder="npub1..."
-                      className="w-full rounded border border-green-500/40 bg-black/50 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none"
+                      className="w-full rounded-sm border border-green-500/40 bg-black/50 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden"
                     />
                   </div>
 
@@ -159,7 +159,7 @@ export default function RequestInvitePage() {
                         value={displayName}
                         onChange={(event) => setDisplayName(event.target.value)}
                         placeholder="Optional"
-                        className="w-full rounded border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none"
+                        className="w-full rounded-sm border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden"
                       />
                     </div>
                     <div>
@@ -171,7 +171,7 @@ export default function RequestInvitePage() {
                         value={contact}
                         onChange={(event) => setContact(event.target.value)}
                         placeholder="Optional"
-                        className="w-full rounded border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none"
+                        className="w-full rounded-sm border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden"
                       />
                     </div>
                   </div>
@@ -186,7 +186,7 @@ export default function RequestInvitePage() {
                         value={referral}
                         onChange={(event) => setReferral(event.target.value)}
                         placeholder="npub or name (optional)"
-                        className="w-full rounded border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none"
+                        className="w-full rounded-sm border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden"
                       />
                     </div>
                     <div>
@@ -198,7 +198,7 @@ export default function RequestInvitePage() {
                         value={client}
                         onChange={(event) => setClient(event.target.value)}
                         placeholder="e.g. Damus, Amethyst"
-                        className="w-full rounded border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none"
+                        className="w-full rounded-sm border border-green-500/20 bg-black/30 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden"
                       />
                     </div>
                   </div>
@@ -213,7 +213,7 @@ export default function RequestInvitePage() {
                       value={message}
                       onChange={(event) => setMessage(event.target.value)}
                       placeholder="Share how you use Nostr, what you plan to post, and any relevant community contributions."
-                      className="w-full rounded border border-green-500/30 bg-black/40 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-none resize-none"
+                      className="w-full rounded-sm border border-green-500/30 bg-black/40 px-4 py-2 text-sm text-gray-100 font-mono focus:border-green-400 focus:outline-hidden resize-none"
                     />
                     <p className="mt-1 text-xs text-gray-500 font-mono">Minimum 25 characters</p>
                   </div>

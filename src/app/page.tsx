@@ -5,7 +5,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 
 export default function HomePage() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
       <MatrixRain />
       {/* Header */}
       <SiteHeader />
@@ -31,7 +31,7 @@ export default function HomePage() {
               </div>
               
               <div className="text-center">
-                <h1 className="text-4xl font-bold mb-6 bg-gradient-to-r from-green-400 to-cyan-400 bg-clip-text text-transparent font-mono">
+                <h1 className="text-4xl font-bold mb-6 bg-linear-to-r from-green-400 to-cyan-400 bg-clip-text text-transparent font-mono">
                   {'> Community Nostr Relay <'}
                 </h1>
                 <p className="text-lg text-gray-300 mb-8 max-w-2xl mx-auto font-mono">

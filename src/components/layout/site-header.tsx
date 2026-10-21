@@ -10,7 +10,7 @@ export function SiteHeader() {
   const toggleMenu = () => setIsOpen(!isOpen);
 
   return (
-    <header className="sticky top-0 border-b border-green-500/30 bg-black/80 backdrop-blur-sm z-50">
+    <header className="sticky top-0 border-b border-green-500/30 bg-black/80 backdrop-blur-xs z-50">
       <div className="container mx-auto px-4 py-4">
         <div className="flex items-center justify-between">
           {/* Logo & Status */}
@@ -28,12 +28,12 @@ export function SiteHeader() {
 
           {/* Desktop Nav */}
           <nav className="hidden md:flex items-center space-x-6">
-            <a href="/#features" className="text-green-400 hover:text-green-300 transition font-mono">
+            <Link href="/#features" className="text-green-400 hover:text-green-300 transition font-mono">
               [Features]
-            </a>
-            <a href="/#access" className="text-green-400 hover:text-green-300 transition font-mono">
+            </Link>
+            <Link href="/#access" className="text-green-400 hover:text-green-300 transition font-mono">
               [Access]
-            </a>
+            </Link>
             <Link href="/request" className="text-green-400 hover:text-green-300 transition font-mono">
               [Request]
             </Link>
@@ -49,7 +49,7 @@ export function SiteHeader() {
 
           {/* Mobile Menu Button */}
           <button 
-            className="md:hidden text-green-400 p-2 hover:bg-green-900/20 rounded transition-colors"
+            className="md:hidden text-green-400 p-2 hover:bg-green-900/20 rounded-sm transition-colors"
             onClick={toggleMenu}
             aria-label="Toggle menu"
           >
@@ -69,16 +69,16 @@ export function SiteHeader() {
              <StatusIndicator status="online" />
              <span className="text-xs text-gray-500 font-mono">Community Nostr Relay</span>
           </div>
-          <a href="/#features" className="text-green-400 hover:text-green-300 transition font-mono py-2 block break-words" onClick={() => setIsOpen(false)}>
+          <Link href="/#features" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
             [Features]
-          </a>
-          <a href="/#access" className="text-green-400 hover:text-green-300 transition font-mono py-2 block break-words" onClick={() => setIsOpen(false)}>
+          </Link>
+          <Link href="/#access" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
             [Access]
-          </a>
-          <Link href="/request" className="text-green-400 hover:text-green-300 transition font-mono py-2 block break-words" onClick={() => setIsOpen(false)}>
+          </Link>
+          <Link href="/request" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
             [Request]
           </Link>
-          <Link href="/support" className="text-green-400 hover:text-green-300 transition font-mono py-2 block break-words" onClick={() => setIsOpen(false)}>
+          <Link href="/support" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
             [Keep the Network Flowing]
           </Link>
           <div className="pt-2">

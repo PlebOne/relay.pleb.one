@@ -6,7 +6,7 @@ import { SiteHeader } from "@/components/layout/site-header";
 
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
       <MatrixRain />
       <SiteHeader />
 
@@ -20,8 +20,8 @@ export default function PrivacyPage() {
                 <div className="space-y-4">
                   <h2 className="text-xl font-bold text-green-400">1. The Basics</h2>
                   <p>
-                    We run a Nostr relay. By definition, a relay's job is to receive public messages (Events) and broadcast them to anyone who asks. 
-                    <strong className="text-white"> If you send an event to this relay, you are making it public.</strong> We cannot "un-publish" data that has already been synced to other relays or clients.
+                    We run a Nostr relay. By definition, a relay&apos;s job is to receive public messages (Events) and broadcast them to anyone who asks. 
+                    <strong className="text-white"> If you send an event to this relay, you are making it public.</strong> We cannot &quot;un-publish&quot; data that has already been synced to other relays or clients.
                   </p>
                 </div>
 
@@ -46,14 +46,14 @@ export default function PrivacyPage() {
                 <div className="space-y-4">
                   <h2 className="text-xl font-bold text-green-400">3. Cookies & Local Storage</h2>
                   <p>
-                    We use a single session cookie (`next-auth.session-token`) to keep you logged in to the dashboard. That's it. No tracking pixels, no analytics scripts, no third-party ad networks spying on you.
+                    We use a single session cookie (`next-auth.session-token`) to keep you logged in to the dashboard. That&apos;s it. No tracking pixels, no analytics scripts, no third-party ad networks spying on you.
                   </p>
                 </div>
 
                 <div className="space-y-4">
                   <h2 className="text-xl font-bold text-green-400">4. Data Sharing</h2>
                   <p>
-                    We do not sell your data. We do not share your private data (like IP logs) with third parties unless compelled by a valid legal order (and even then, we'll try to fight it if it's stupid).
+                    We do not sell your data. We do not share your private data (like IP logs) with third parties unless compelled by a valid legal order (and even then, we&apos;ll try to fight it if it&apos;s stupid).
                   </p>
                   <p>
                     However, remember that <span className="text-white">Nostr events are public data</span>. We share them with every client that connects to this relay. That is the entire point of the protocol.

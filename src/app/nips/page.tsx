@@ -160,7 +160,7 @@ const nipEntries = [
 
 export default function NipsPage() {
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-900 via-black to-gray-900 relative overflow-hidden">
       <MatrixRain />
       <section className="py-16 relative z-10">
         <div className="container mx-auto px-4 max-w-5xl">
@@ -213,10 +213,10 @@ export default function NipsPage() {
                     {nip.summary}
                   </p>
                   <div className="flex flex-wrap items-center gap-3 text-xs font-mono uppercase tracking-wide text-gray-400">
-                    <span className="px-2 py-1 rounded bg-green-500/10 border border-green-500/40 text-green-300">
+                    <span className="px-2 py-1 rounded-sm bg-green-500/10 border border-green-500/40 text-green-300">
                       {nip.focus}
                     </span>
-                    <span className="px-2 py-1 rounded bg-cyan-500/10 border border-cyan-500/40 text-cyan-200">
+                    <span className="px-2 py-1 rounded-sm bg-cyan-500/10 border border-cyan-500/40 text-cyan-200">
                       {nip.status}
                     </span>
                     <a

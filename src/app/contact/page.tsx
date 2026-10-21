@@ -16,7 +16,7 @@ export default function ContactPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
       <MatrixRain />
       <SiteHeader />
 
@@ -35,7 +35,7 @@ export default function ContactPage() {
                 {/* Nostr Contact Card */}
                 <div className="rounded-xl border border-green-500/30 bg-black/50 p-6 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                    <span className="text-xs text-green-500 border border-green-500/30 rounded px-2 py-1">NOSTR</span>
+                    <span className="text-xs text-green-500 border border-green-500/30 rounded-sm px-2 py-1">NOSTR</span>
                   </div>
                   
                   <div className="flex items-start gap-4">
@@ -46,7 +46,7 @@ export default function ContactPage() {
                       <h3 className="text-lg font-bold text-green-400">{adminName}</h3>
                       <p className="text-sm text-gray-400 mb-3">Relay Operator</p>
                       
-                      <div className="bg-black/60 rounded p-3 border border-green-500/20 mb-3">
+                      <div className="bg-black/60 rounded-sm p-3 border border-green-500/20 mb-3">
                         <code className="text-xs text-green-300 break-all block">
                           {adminNpub}
                         </code>
@@ -55,13 +55,13 @@ export default function ContactPage() {
                       <div className="flex gap-3">
                         <button 
                           onClick={() => copyToClipboard(adminNpub)}
-                          className="text-xs bg-green-900/20 hover:bg-green-900/40 text-green-400 border border-green-500/30 px-3 py-1.5 rounded transition-colors"
+                          className="text-xs bg-green-900/20 hover:bg-green-900/40 text-green-400 border border-green-500/30 px-3 py-1.5 rounded-sm transition-colors"
                         >
                           Copy npub
                         </button>
                         <a 
                           href={`nostr:${adminNpub}`}
-                          className="text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30 px-3 py-1.5 rounded transition-colors"
+                          className="text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30 px-3 py-1.5 rounded-sm transition-colors"
                         >
                           Open in Client
                         </a>
@@ -73,7 +73,7 @@ export default function ContactPage() {
                 {/* Email Contact Card */}
                 <div className="rounded-xl border border-green-500/30 bg-black/50 p-6 relative overflow-hidden group">
                   <div className="absolute top-0 right-0 p-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                    <span className="text-xs text-green-500 border border-green-500/30 rounded px-2 py-1">EMAIL</span>
+                    <span className="text-xs text-green-500 border border-green-500/30 rounded-sm px-2 py-1">EMAIL</span>
                   </div>
 
                   <div className="flex items-center gap-4">

@@ -1,33 +1,194 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@theme {
+  --font-sans:
+    var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+    'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  --font-mono:
+    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, 'Liberation Mono', 'Courier New', monospace;
+
+  /* Tailwind v3 palette for the color families this app uses, so the v4
+     upgrade keeps the existing look (v4 defaults are OKLCH and differ). */
+  --color-green-50: #f0fdf4;
+  --color-green-100: #dcfce7;
+  --color-green-200: #bbf7d0;
+  --color-green-300: #86efac;
+  --color-green-400: #4ade80;
+  --color-green-500: #22c55e;
+  --color-green-600: #16a34a;
+  --color-green-700: #15803d;
+  --color-green-800: #166534;
+  --color-green-900: #14532d;
+  --color-green-950: #052e16;
+
+  --color-gray-50: #f9fafb;
+  --color-gray-100: #f3f4f6;
+  --color-gray-200: #e5e7eb;
+  --color-gray-300: #d1d5db;
+  --color-gray-400: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-600: #4b5563;
+  --color-gray-700: #374151;
+  --color-gray-800: #1f2937;
+  --color-gray-900: #111827;
+  --color-gray-950: #030712;
+
+  --color-yellow-50: #fefce8;
+  --color-yellow-100: #fef9c3;
+  --color-yellow-200: #fef08a;
+  --color-yellow-300: #fde047;
+  --color-yellow-400: #facc15;
+  --color-yellow-500: #eab308;
+  --color-yellow-600: #ca8a04;
+  --color-yellow-700: #a16207;
+  --color-yellow-800: #854d0e;
+  --color-yellow-900: #713f12;
+  --color-yellow-950: #422006;
+
+  --color-red-50: #fef2f2;
+  --color-red-100: #fee2e2;
+  --color-red-200: #fecaca;
+  --color-red-300: #fca5a5;
+  --color-red-400: #f87171;
+  --color-red-500: #ef4444;
+  --color-red-600: #dc2626;
+  --color-red-700: #b91c1c;
+  --color-red-800: #991b1b;
+  --color-red-900: #7f1d1d;
+  --color-red-950: #450a0a;
+
+  --color-orange-50: #fff7ed;
+  --color-orange-100: #ffedd5;
+  --color-orange-200: #fed7aa;
+  --color-orange-300: #fdba74;
+  --color-orange-400: #fb923c;
+  --color-orange-500: #f97316;
+  --color-orange-600: #ea580c;
+  --color-orange-700: #c2410c;
+  --color-orange-800: #9a3412;
+  --color-orange-900: #7c2d12;
+  --color-orange-950: #431407;
+
+  --color-cyan-50: #ecfeff;
+  --color-cyan-100: #cffafe;
+  --color-cyan-200: #a5f3fc;
+  --color-cyan-300: #67e8f9;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
+  --color-cyan-600: #0891b2;
+  --color-cyan-700: #0e7490;
+  --color-cyan-800: #155e75;
+  --color-cyan-900: #164e63;
+  --color-cyan-950: #083344;
+
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-300: #93c5fd;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-600: #2563eb;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-blue-900: #1e3a8a;
+  --color-blue-950: #172554;
+
+  --color-cyber-50: #f0f9ff;
+  --color-cyber-100: #e0f2fe;
+  --color-cyber-200: #bae6fd;
+  --color-cyber-300: #7dd3fc;
+  --color-cyber-400: #38bdf8;
+  --color-cyber-500: #0ea5e9;
+  --color-cyber-600: #0284c7;
+  --color-cyber-700: #0369a1;
+  --color-cyber-800: #075985;
+  --color-cyber-900: #0c4a6e;
+  --color-cyber-950: #082f49;
+
+  --color-bitcoin-50: #fffbeb;
+  --color-bitcoin-100: #fef3c7;
+  --color-bitcoin-200: #fde68a;
+  --color-bitcoin-300: #fcd34d;
+  --color-bitcoin-400: #fbbf24;
+  --color-bitcoin-500: #f59e0b;
+  --color-bitcoin-600: #d97706;
+  --color-bitcoin-700: #b45309;
+  --color-bitcoin-800: #92400e;
+  --color-bitcoin-900: #78350f;
+  --color-bitcoin-950: #451a03;
+
+  --animate-fade-in: fadeIn 0.5s ease-in-out;
+  --animate-slide-up: slideUp 0.3s ease-out;
+
+  @keyframes fadeIn {
+    0% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 1;
+    }
+  }
+  @keyframes slideUp {
+    0% {
+      transform: translateY(10px);
+      opacity: 0;
+    }
+    100% {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+}
+
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+/*
+  Glow shadows are fully opaque on purpose: under Tailwind v3 the original
+  theme(colors.green.400/20) compiled to rgb(... / 20), which clamps to alpha 1.
+*/
+@utility cyber-glow {
+  box-shadow:
+    0 0 10px var(--color-green-400),
+    0 0 20px var(--color-green-400);
+}
+
+@utility neon-border {
+  border: 1px solid var(--color-green-400);
+  box-shadow:
+    inset 0 0 10px var(--color-green-400),
+    0 0 10px var(--color-green-400);
+}
+
+@utility terminal-window {
+  background: linear-gradient(135deg, #0a0a0a, #1a1a1a);
+  border: 1px solid var(--color-green-500);
+  box-shadow:
+    0 0 20px var(--color-green-400),
+    inset 0 0 20px var(--color-green-400);
+}
 
 /* Custom Nostr/Cypherpunk theme styles */
 @layer base {
   :root {
     --background: 0 0% 0%;
     --foreground: 120 100% 60%;
-  }
-}
-
-@layer components {
-  .cyber-glow {
-    box-shadow: 0 0 10px theme(colors.green.400), 0 0 20px theme(colors.green.400/50);
-  }
-  
-  .neon-border {
-    border: 1px solid theme(colors.green.400);
-    box-shadow: 
-      inset 0 0 10px theme(colors.green.400/20),
-      0 0 10px theme(colors.green.400/30);
-  }
-  
-  .terminal-window {
-    background: linear-gradient(135deg, #0a0a0a, #1a1a1a);
-    border: 1px solid theme(colors.green.500);
-    box-shadow: 
-      0 0 20px theme(colors.green.400/20),
-      inset 0 0 20px theme(colors.green.400/10);
   }
 }
 
@@ -41,12 +202,12 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: theme(colors.green.600);
+  background: var(--color-green-600);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: theme(colors.green.500);
+  background: var(--color-green-500);
 }
 
 .matrix-canvas {

@@ -297,7 +297,7 @@ export function AdminMessageBoard() {
               {!!selectedMessage.metadata && (
                 <div>
                   <label className="block text-xs text-gray-500">Metadata</label>
-                  <pre className="mt-1 overflow-x-auto rounded bg-black/50 p-2 text-xs text-gray-400">
+                  <pre className="mt-1 overflow-x-auto rounded-sm bg-black/50 p-2 text-xs text-gray-400">
                     {JSON.stringify(selectedMessage.metadata, null, 2)}
                   </pre>
                 </div>
@@ -318,7 +318,7 @@ export function AdminMessageBoard() {
                       value={blacklistReason}
                       onChange={(e) => setBlacklistReason(e.target.value)}
                       placeholder="Optional reason for blacklist..."
-                      className="w-full rounded bg-black/50 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-red-600"
+                      className="w-full rounded-sm bg-black/50 px-3 py-2 text-sm text-white placeholder-gray-500 outline-hidden focus:ring-2 focus:ring-red-600"
                     />
                     <button
                       onClick={() =>
@@ -355,7 +355,7 @@ export function AdminMessageBoard() {
                     value={denyReason}
                     onChange={(e) => setDenyReason(e.target.value)}
                     placeholder="Reason for denial (required)..."
-                    className="w-full rounded bg-black/50 px-3 py-2 text-sm text-white placeholder-gray-500 outline-none focus:ring-2 focus:ring-yellow-600"
+                    className="w-full rounded-sm bg-black/50 px-3 py-2 text-sm text-white placeholder-gray-500 outline-hidden focus:ring-2 focus:ring-yellow-600"
                   />
                   <button
                     onClick={() => {

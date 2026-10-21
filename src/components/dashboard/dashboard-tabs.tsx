@@ -90,7 +90,7 @@ export function DashboardTabs({ session }: DashboardTabsProps) {
       {/* Tab Content */}
       <div className="min-h-[500px] animate-in fade-in slide-in-from-bottom-4 duration-500">
         {activeTab === "feed" && (
-          <section className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">
             <LiveFeed />
 
             <aside className="space-y-6">

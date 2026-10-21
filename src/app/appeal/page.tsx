@@ -110,7 +110,7 @@ export default function AppealPage() {
                 type="text"
                 value={session.user.npub || ""}
                 disabled
-                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-gray-300 outline-none"
+                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-gray-300 outline-hidden"
               />
             </div>
 
@@ -126,7 +126,7 @@ export default function AppealPage() {
                 required
                 maxLength={200}
                 placeholder="Brief description of your appeal"
-                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-white outline-none focus:border-green-400"
+                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-white outline-hidden focus:border-green-400"
               />
             </div>
 
@@ -142,7 +142,7 @@ export default function AppealPage() {
                 maxLength={2000}
                 rows={8}
                 placeholder="Explain why you believe the action was incorrect..."
-                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-white outline-none focus:border-green-400"
+                className="w-full rounded-md border border-green-500/30 bg-black/50 px-4 py-3 text-white outline-hidden focus:border-green-400"
               />
               <p className="mt-1 text-xs text-gray-500">{formData.content.length}/2000 characters</p>
             </div>

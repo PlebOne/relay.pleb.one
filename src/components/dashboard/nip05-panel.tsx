@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { api } from "@/trpc/react";
 import { GlowingButton } from "@/components/ui/cypherpunk";
 import { DEFAULT_NIP05_DOMAIN, NIP05_DOMAINS, isNip05Domain, type Nip05Domain } from "@/lib/nip05-domains";
@@ -24,13 +24,14 @@ export function Nip05Panel() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (settings) {
-      setEnabled(settings.enabled);
-      setName(settings.name ?? "");
-      setDomain(isNip05Domain(settings.domain) ? settings.domain : DEFAULT_NIP05_DOMAIN);
-    }
-  }, [settings]);
+  // Sync form state when settings load or change (adjusts state during render)
+  const [syncedSettings, setSyncedSettings] = useState<typeof settings>();
+  if (settings && settings !== syncedSettings) {
+    setSyncedSettings(settings);
+    setEnabled(settings.enabled);
+    setName(settings.name ?? "");
+    setDomain(isNip05Domain(settings.domain) ? settings.domain : DEFAULT_NIP05_DOMAIN);
+  }
 
   const handleSave = () => {
     if (enabled && !name) {
@@ -74,7 +75,7 @@ export function Nip05Panel() {
             type="checkbox"
             checked={enabled}
             onChange={(e) => setEnabled(e.target.checked)}
-            className="h-5 w-5 rounded border-green-500/30 bg-black/50 text-green-500 focus:ring-2 focus:ring-green-500"
+            className="h-5 w-5 rounded-sm border-green-500/30 bg-black/50 text-green-500 focus:ring-2 focus:ring-green-500"
           />
           <span className="text-sm text-gray-300">Enable NIP-05 verification</span>
         </label>
@@ -92,7 +93,7 @@ export function Nip05Panel() {
                 onChange={(e) => handleNameChange(e.target.value)}
                 placeholder="yourname"
                 maxLength={30}
-                className="flex-1 rounded-lg border border-green-500/30 bg-black/50 px-4 py-2 text-white placeholder-gray-500 focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20"
+                className="flex-1 rounded-lg border border-green-500/30 bg-black/50 px-4 py-2 text-white placeholder-gray-500 focus:border-green-500 focus:outline-hidden focus:ring-2 focus:ring-green-500/20"
               />
               <span className="text-gray-400 font-mono">@{domain}</span>
             </div>
@@ -114,7 +115,7 @@ export function Nip05Panel() {
               onChange={(e) => {
                 if (isNip05Domain(e.target.value)) setDomain(e.target.value);
               }}
-              className="w-full rounded-lg border border-green-500/30 bg-black/50 px-4 py-2 font-mono text-white focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20"
+              className="w-full rounded-lg border border-green-500/30 bg-black/50 px-4 py-2 font-mono text-white focus:border-green-500 focus:outline-hidden focus:ring-2 focus:ring-green-500/20"
             >
               {NIP05_DOMAINS.map((d) => (
                 <option key={d} value={d} className="bg-black">

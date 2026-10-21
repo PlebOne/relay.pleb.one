@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine3.24
     container_name: relay-postgres
     environment:
       POSTGRES_DB: relay_pleb_one
@@ -9,8 +9,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-relay_password_change_me}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    # Loopback only (host-side psql / prisma db push). Other services use the internal network.
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U relay_user -d relay_pleb_one"]
@@ -20,13 +21,16 @@ services:
 
   # Redis for caching and sessions
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.11-alpine3.21
     container_name: relay-redis
-    ports:
-      - "6379:6379"
+    # Not published; the relay reaches it on the internal network.
+    # Optional auth: set REDIS_PASSWORD in .env to enable requirepass.
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: ["sh", "-c", "exec redis-server $${REDIS_PASSWORD:+--requirepass \"$$REDIS_PASSWORD\"}"]
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli $${REDIS_PASSWORD:+--no-auth-warning -a \"$$REDIS_PASSWORD\"} ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -46,8 +50,9 @@ services:
       - RELAY_PORT=3001
       - NEXT_PUBLIC_RELAY_URL=${NEXT_PUBLIC_RELAY_URL:-wss://relay.pleb.one}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-https://relay.pleb.one}
+    # Loopback only; Caddy reaches app:3000 on the internal network.
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -55,7 +60,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      # The slim node image has no curl/wget; use node itself
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -69,10 +75,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://relay_user:${DB_PASSWORD}@postgres:5432/relay_pleb_one
       - REDIS_URL=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - RELAY_PORT=3001
       - RUST_LOG=info,relay_rs=debug
+    # Loopback only; Caddy reaches relay:3001 on the internal network.
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -82,7 +90,7 @@ services:
 
   # Caddy Reverse Proxy
   caddy:
-    image: caddy:2-alpine
+    image: caddy:2.11.7-alpine
     container_name: relay-caddy
     ports:
       - "80:80"
@@ -119,10 +127,12 @@ services:
       --listen=0.0.0.0:9735
       --restlisten=0.0.0.0:8080
       --tlsextraip=0.0.0.0
+    # Loopback only. P2P is loopback too, so no inbound peer connections (outbound
+    # channels still work); change to "9735:9735" only if this node must accept inbound peers.
     ports:
-      - "9735:9735"  # P2P
-      - "10009:10009"  # gRPC
-      - "8080:8080"    # REST
+      - "127.0.0.1:9735:9735"  # P2P
+      - "127.0.0.1:10009:10009"  # gRPC
+      - "127.0.0.1:8080:8080"    # REST
     volumes:
       - lnd_data:/home/lnd/.lnd
     depends_on:
@@ -145,9 +155,11 @@ services:
       -zmqpubrawblock=tcp://0.0.0.0:28332
       -zmqpubrawtx=tcp://0.0.0.0:28333
       -txindex=1
+    # Loopback only. lnd reaches bitcoind:8332 on the internal network.
+    # P2P is loopback too (outbound sync still works).
     ports:
-      - "8332:8332"  # RPC
-      - "18333:18333"  # P2P testnet
+      - "127.0.0.1:8332:8332"  # RPC
+      - "127.0.0.1:18333:18333"  # P2P testnet
     volumes:
       - bitcoin_data:/home/bitcoin/.bitcoin
     restart: unless-stopped

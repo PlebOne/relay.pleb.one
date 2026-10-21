@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const linkClass =
-  "font-mono text-sm text-green-400 underline underline-offset-4 hover:text-green-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-green-400 focus-visible:outline-offset-2";
+  "font-mono text-sm text-green-400 underline underline-offset-4 hover:text-green-300 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-green-400 focus-visible:outline-offset-2";
 
 // Interim pairing link; swap to PlebOne-hosted pairing docs once they exist.
 const OMOSTRICH_PAIRING_URL = "https://github.com/ninepointlabs/omostrich#install";
@@ -44,7 +44,7 @@ export function PlebOneCommunity({ variant }: { variant: "request" | "login" }) 
           ) : (
             <>
               relay.pleb.one is part of PlebOne, a small home for open-source Nostr tools. New here?{" "}
-              <Link href="/request" className="text-green-400 underline underline-offset-4 hover:text-green-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-green-400 focus-visible:outline-offset-2">
+              <Link href="/request" className="text-green-400 underline underline-offset-4 hover:text-green-300 focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-green-400 focus-visible:outline-offset-2">
                 Request an invite
               </Link>
               .

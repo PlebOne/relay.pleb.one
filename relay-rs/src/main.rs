@@ -1,6 +1,6 @@
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
+        ws::{rejection::WebSocketUpgradeRejection, Message, WebSocket, WebSocketUpgrade},
         State,
     },
     http::HeaderMap,
@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use nostr::{ClientMessage, Event, Filter, RelayMessage, SubscriptionId, JsonUtil, Tag, Keys, EventBuilder, Timestamp, Kind};
+use nostr::prelude::{ClientMessage, Event, EventBuilder, Filter, FinalizeEvent, Keys, Kind, MatchEventOptions, RelayMessage, SubscriptionId, Tag};
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
 use std::{
     collections::HashMap,
@@ -19,8 +19,8 @@ use std::{
 };
 use tokio::sync::broadcast;
 use tracing::{error, info, warn, debug};
-use negentropy::{Bytes, Negentropy};
-use deadpool_redis::{Pool as RedisPool, Config as RedisConfig, Runtime};
+use negentropy::{Id, Negentropy, NegentropyStorageVector};
+use deadpool_redis::{Pool as RedisPool, Config as RedisConfig, ConnectionInfo as RedisConnectionInfo, Runtime};
 use redis::AsyncCommands;
 use tower_http::compression::CompressionLayer;
 
@@ -50,9 +50,22 @@ async fn main() {
 
     // Initialize Redis connection pool
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
-    let redis_pool = match RedisConfig::from_url(&redis_url).create_pool(Some(Runtime::Tokio1)) {
+    // REDIS_PASSWORD (optional) overrides any password in REDIS_URL.
+    let redis_config = match redis::IntoConnectionInfo::into_connection_info(redis_url.as_str()) {
+        Ok(info) => {
+            let mut info = RedisConnectionInfo::from(info);
+            if let Ok(password) = std::env::var("REDIS_PASSWORD") {
+                if !password.is_empty() {
+                    info.redis.password = Some(password);
+                }
+            }
+            RedisConfig::from_connection_info(info)
+        }
+        Err(_) => RedisConfig::from_url(&redis_url),
+    };
+    let redis_pool = match redis_config.create_pool(Some(Runtime::Tokio1)) {
         Ok(pool) => {
-            info!("Redis connection pool initialized: {}", redis_url);
+            info!("Redis connection pool initialized");
             Some(pool)
         }
         Err(e) => {
@@ -75,23 +88,19 @@ async fn main() {
         loop {
             // Build Kind 30166 Event
             let tags = vec![
-                Tag::Identifier("nrelay".to_string()),
+                Tag::identifier("nrelay"),
                 Tag::parse(vec!["url", "wss://relay.pleb.one"]).unwrap(),
                 Tag::parse(vec!["software", "relay-rs"]).unwrap(),
                 Tag::parse(vec!["version", "0.1.0"]).unwrap(),
                 Tag::parse(vec!["supported_nips", "1", "9", "11", "15", "17", "20", "23", "33", "40", "42", "51", "56", "62", "65", "66", "77", "86"]).unwrap(),
             ];
 
-            let event_builder = EventBuilder::new(
-                Kind::from(30166),
-                "",
-                tags,
-            );
+            let event_builder = EventBuilder::new(Kind::from(30166), "").tags(tags);
             
-            if let Ok(event) = event_builder.to_event(&keys) {
+            if let Ok(event) = event_builder.finalize(&keys) {
                 // Save to DB (Upsert)
                 let tags_json = serde_json::to_value(&event.tags).unwrap_or(serde_json::Value::Null);
-                let created_at = chrono::DateTime::from_timestamp(event.created_at.as_u64() as i64, 0)
+                let created_at = chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
                     .unwrap_or_default()
                     .naive_utc()
                     .and_utc();
@@ -109,7 +118,7 @@ async fn main() {
                 .bind(nanoid::nanoid!())
                 .bind(event.id.to_string())
                 .bind(event.pubkey.to_string())
-                .bind(event.kind.as_u64() as i32)
+                .bind(event.kind.as_u16() as i32)
                 .bind(&event.content)
                 .bind(tags_json)
                 .bind(event.sig.to_string())
@@ -139,11 +148,11 @@ async fn main() {
 }
 
 async fn handler(
-    ws: Option<WebSocketUpgrade>,
+    ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
-    if let Some(ws) = ws {
+    if let Ok(ws) = ws {
         return ws.on_upgrade(|socket| handle_socket(socket, state)).into_response();
     }
 
@@ -184,7 +193,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let mut heartbeat_task = tokio::spawn(async move {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
-            if tx_ping.send(Message::Ping(vec![])).await.is_err() {
+            if tx_ping.send(Message::Ping(Default::default())).await.is_err() {
                 break;
             }
         }
@@ -192,10 +201,10 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
 
     // NIP-42: Send AUTH challenge
     let challenge = nanoid::nanoid!();
-    let _ = tx_internal.send(Message::Text(RelayMessage::auth(challenge.clone()).as_json())).await;
+    let _ = tx_internal.send(Message::Text(RelayMessage::auth(challenge.clone()).as_json().into())).await;
 
     let mut auth_pubkey: Option<String> = None;
-    let mut negentropy_sessions: HashMap<String, Negentropy> = HashMap::new();
+    let mut negentropy_sessions: HashMap<String, NegSession> = HashMap::new();
 
     // Loop to handle incoming messages from client
     loop {
@@ -224,7 +233,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                         }
                                         _ => {
                                             // Standard Nostr
-                                            match ClientMessage::from_json(&text) {
+                                            match ClientMessage::from_json(text.as_str()) {
                                                 Ok(msg) => {
                                                     handle_client_message(msg, &state, &mut subscriptions, &tx_internal, &challenge, &mut auth_pubkey).await;
                                                 }
@@ -267,7 +276,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                                         
                                                         if !handled {
                                                             warn!("Invalid message: {} - {}", e, text);
-                                                            let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json())).await;
+                                                            let _ = tx_internal.send(Message::Text(RelayMessage::notice(format!("Invalid message: {}", e)).as_json().into())).await;
                                                         }
                                                     }
                                                 }
@@ -293,9 +302,9 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 let mut sent_to = Vec::new();
                 for (sub_id, filters) in &subscriptions {
                     for filter in filters {
-                        if filter.match_event(&event) {
+                        if filter.match_event(&event, MatchEventOptions::new()) {
                             debug!("Event {} matches subscription {}", event.id, sub_id);
-                            let _ = tx_internal.send(Message::Text(RelayMessage::event(SubscriptionId::new(sub_id), event.clone()).as_json())).await;
+                            let _ = tx_internal.send(Message::Text(RelayMessage::event(SubscriptionId::new(sub_id), event.clone()).as_json().into())).await;
                             sent_to.push(sub_id.clone());
                             break; // Send only once per subscription
                         }
@@ -313,7 +322,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
 }
 
 async fn handle_client_message(
-    msg: ClientMessage,
+    msg: ClientMessage<'_>,
     state: &Arc<AppState>,
     subscriptions: &mut HashMap<String, Vec<Filter>>, 
     sender: &tokio::sync::mpsc::Sender<Message>,
@@ -322,26 +331,27 @@ async fn handle_client_message(
 ) {
     match msg {
         ClientMessage::Event(event) => {
-            handle_event(*event, state, sender).await;
+            handle_event(event.into_owned(), state, sender).await;
         }
         ClientMessage::Req { subscription_id, filters } => {
-            handle_req(subscription_id, filters, state, subscriptions, sender).await;
+            let filters = filters.into_iter().map(|f| f.into_owned()).collect();
+            handle_req(subscription_id.into_owned(), filters, state, subscriptions, sender).await;
         }
         ClientMessage::Close(subscription_id) => {
             subscriptions.remove(&subscription_id.to_string());
-            let _ = sender.send(Message::Text(RelayMessage::closed(subscription_id, "Subscription closed").as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::closed(subscription_id.into_owned(), "Subscription closed").as_json().into())).await;
         }
         ClientMessage::Auth(event) => {
             // NIP-42: Verify Auth
-            if event.kind.as_u64() != 22242 {
-                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: invalid kind for auth".to_string()).as_json())).await;
+            if event.kind.as_u16() != 22242 {
+                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: invalid kind for auth".to_string()).as_json().into())).await;
                 return;
             }
             
             // Verify challenge tag
             let mut challenge_valid = false;
-            for tag in &event.tags {
-                let t = tag.as_vec();
+            for tag in event.tags.iter() {
+                let t = tag.as_slice();
                 if t.len() >= 2 && t[0] == "challenge" && t[1] == challenge {
                     challenge_valid = true;
                     break;
@@ -349,18 +359,18 @@ async fn handle_client_message(
             }
 
             if !challenge_valid {
-                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: invalid challenge".to_string()).as_json())).await;
+                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: invalid challenge".to_string()).as_json().into())).await;
                 return;
             }
 
             // Verify signature
             if let Err(e) = event.verify() {
-                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("error: invalid signature: {}", e)).as_json())).await;
+                let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("error: invalid signature: {}", e)).as_json().into())).await;
                 return;
             }
 
             *auth_pubkey = Some(event.pubkey.to_string());
-            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "auth-success".to_string()).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "auth-success".to_string()).as_json().into())).await;
         }
         _ => {
             // Other messages
@@ -403,7 +413,7 @@ async fn handle_nip86(
             "id": id,
             "error": { "code": -32000, "message": "Unauthorized: Admin access required" }
         });
-        let _ = sender.send(Message::Text(err.to_string())).await;
+        let _ = sender.send(Message::Text(err.to_string().into())).await;
         return;
     }
 
@@ -460,52 +470,60 @@ async fn handle_nip86(
         })
     };
 
-    let _ = sender.send(Message::Text(response.to_string())).await;
+    let _ = sender.send(Message::Text(response.to_string().into())).await;
 }
 
 // NIP-77: Negentropy
+type NegSession = Negentropy<'static, NegentropyStorageVector>;
+
 async fn handle_nip77_open(
     arr: &Vec<serde_json::Value>,
     state: &Arc<AppState>,
     sender: &tokio::sync::mpsc::Sender<Message>,
-    sessions: &mut HashMap<String, Negentropy>,
+    sessions: &mut HashMap<String, NegSession>,
 ) {
-    if arr.len() < 5 { return; }
+    // Current NIP-77: ["NEG-OPEN", sub_id, filter, initial_msg].
+    // Older drafts put an id size before the message: ["NEG-OPEN", sub_id, filter, id_size, initial_msg].
+    let initial_msg_hex = match arr.len() {
+        4 => arr[3].as_str().unwrap_or(""),
+        n if n >= 5 => arr[4].as_str().unwrap_or(""),
+        _ => return,
+    };
     let sub_id = arr[1].as_str().unwrap_or("");
     let filter_val = &arr[2];
-    let _id_len = arr[3].as_u64().unwrap_or(32) as u8; // Not used in this simple impl
-    let initial_msg_hex = arr[4].as_str().unwrap_or("");
 
     if let Ok(_filter) = serde_json::from_value::<Filter>(filter_val.clone()) {
         // 1. Fetch ALL event IDs matching filter (Heavy operation!)
         // In a real impl, this needs optimized DB queries or a separate index
-        let rows = sqlx::query("SELECT \"eventId\" FROM events") // Simplified: Fetch all and filter in memory for now due to complex filter mapping
+        let rows = sqlx::query("SELECT \"eventId\", EXTRACT(EPOCH FROM \"createdAt\")::bigint AS created_at FROM events") // Simplified: Fetch all and filter in memory for now due to complex filter mapping
             .fetch_all(&state.db)
             .await;
-        
+
         if let Ok(rows) = rows {
-            // Create Negentropy session
-            if let Ok(mut neg) = Negentropy::new(32, Some(100_000)) { // 32 byte ID
-                for row in rows {
-                    let eid: String = row.get("eventId");
-                    // We need to check if this event matches the filter. 
-                    // Since we don't have the full event here, we should ideally query with WHERE clauses.
-                    // For this implementation, we'll assume the DB query handles it (TODO: Map Filter to SQL)
-                    // For now, let's just add them all to test the protocol flow
-                    if let Ok(bytes) = hex::decode(&eid) {
-                         let id_bytes = Bytes::from_slice(&bytes);
-                         let _ = neg.add_item(0, id_bytes);
+            // Items are ordered by (created_at, id), so real timestamps are
+            // needed for the ranges to line up with the client's.
+            let mut storage = NegentropyStorageVector::with_capacity(rows.len());
+            for row in rows {
+                let eid: String = row.get("eventId");
+                let created_at: i64 = row.try_get("created_at").unwrap_or(0);
+                // TODO: Map Filter to SQL; for now every stored event is offered.
+                if let Ok(bytes) = hex::decode(&eid) {
+                    if let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                        let _ = storage.insert(created_at.max(0) as u64, Id::from_byte_array(id));
                     }
                 }
-                
-                let _ = neg.seal();
-                
+            }
+            if storage.seal().is_err() {
+                return;
+            }
+
+            // Create Negentropy session (100 KB frame limit)
+            if let Ok(mut neg) = Negentropy::owned(storage, 100_000) {
                 // Process initial message
-                if let Ok(msg_bytes) = hex::decode(initial_msg_hex) {
-                    let query = Bytes::from_slice(&msg_bytes);
+                if let Ok(query) = hex::decode(initial_msg_hex) {
                     if let Ok(response) = neg.reconcile(&query) {
                         sessions.insert(sub_id.to_string(), neg);
-                        let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, response.to_hex()]).to_string())).await;
+                        let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
                     }
                 }
             }
@@ -517,24 +535,23 @@ async fn handle_nip77_msg(
     arr: &Vec<serde_json::Value>,
     _state: &Arc<AppState>,
     sender: &tokio::sync::mpsc::Sender<Message>,
-    sessions: &mut HashMap<String, Negentropy>,
+    sessions: &mut HashMap<String, NegSession>,
 ) {
     if arr.len() < 3 { return; }
     let sub_id = arr[1].as_str().unwrap_or("");
     let msg_hex = arr[2].as_str().unwrap_or("");
 
     if let Some(neg) = sessions.get_mut(sub_id) {
-        if let Ok(msg_bytes) = hex::decode(msg_hex) {
-            let query = Bytes::from_slice(&msg_bytes);
+        if let Ok(query) = hex::decode(msg_hex) {
             if let Ok(response) = neg.reconcile(&query) {
-                let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, response.to_hex()]).to_string())).await;
+                let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
             }
         }
     }
 }
-async fn handle_nip77_close(
+fn handle_nip77_close(
     arr: &Vec<serde_json::Value>,
-    sessions: &mut HashMap<String, Negentropy>,
+    sessions: &mut HashMap<String, NegSession>,
 ) {
     if arr.len() < 2 { return; }
     let sub_id = arr[1].as_str().unwrap_or("");
@@ -598,7 +615,7 @@ async fn cache_event(state: &Arc<AppState>, event: &Event) {
     if let Some(ref redis_pool) = state.redis {
         if let Ok(mut conn) = redis_pool.get().await {
             let event_json = event.as_json();
-            let score = event.created_at.as_u64() as f64;
+            let score = event.created_at.as_secs() as f64;
             
             // Add to sorted set
             let _: Result<(), _> = conn.zadd(RECENT_EVENTS_KEY, &event_json, score).await;
@@ -631,7 +648,7 @@ async fn get_cached_events(state: &Arc<AppState>, filter: &Filter, limit: usize)
             if let Ok(cached_events) = result {
                 for event_json in cached_events {
                     if let Ok(event) = Event::from_json(&event_json) {
-                        if filter.match_event(&event) {
+                        if filter.match_event(&event, MatchEventOptions::new()) {
                             events.push(event);
                         }
                     }
@@ -660,19 +677,19 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
     
     // 1. Verify signature
     if let Err(e) = event.verify() {
-        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("Invalid signature: {}", e)).as_json())).await;
+        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("Invalid signature: {}", e)).as_json().into())).await;
         return;
     }
 
     // NIP-40: Check Expiration
     let mut expires_at: Option<chrono::NaiveDateTime> = None;
-    for tag in &event.tags {
-        let t = tag.as_vec();
+    for tag in event.tags.iter() {
+        let t = tag.as_slice();
         if t.len() >= 2 && t[0] == "expiration" {
             if let Ok(timestamp) = t[1].parse::<i64>() {
                 let exp = chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_default();
                 if exp < chrono::Utc::now() {
-                    let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: event expired".to_string()).as_json())).await;
+                    let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: event expired".to_string()).as_json().into())).await;
                     return;
                 }
                 expires_at = Some(exp.naive_utc());
@@ -685,20 +702,20 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
     let (is_admin, is_active) = check_whitelist_cached(state, &pubkey_hex).await;
     
     if !is_admin && !is_active {
-        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "blocked: user not whitelisted".to_string()).as_json())).await;
+        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "blocked: user not whitelisted".to_string()).as_json().into())).await;
         return;
     }
 
     // 3. Handle addressable/replaceable events (NIP-33: kinds 30000-39999)
-    let kind_num = event.kind.as_u64();
+    let kind_num = event.kind.as_u16();
     if kind_num >= 30000 && kind_num < 40000 {
         // Extract d-tag for addressable events
         let d_tag = event.tags.iter()
             .find(|t| {
-                let v = t.as_vec();
+                let v = t.as_slice();
                 v.len() >= 1 && v[0] == "d"
             })
-            .map(|t| t.as_vec().get(1).cloned().unwrap_or_default())
+            .map(|t| t.as_slice().get(1).cloned().unwrap_or_default())
             .unwrap_or_default();
         
         // Delete older events with same pubkey + kind + d-tag
@@ -718,7 +735,7 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
 
     // 4. Save to DB
     let tags_json = serde_json::to_value(&event.tags).unwrap_or(serde_json::Value::Null);
-    let created_at = chrono::DateTime::from_timestamp(event.created_at.as_u64() as i64, 0)
+    let created_at = chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
         .unwrap_or_default()
         .naive_utc()
         .and_utc();
@@ -731,7 +748,7 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
     .bind(nanoid::nanoid!())
     .bind(event.id.to_string())
     .bind(event.pubkey.to_string())
-    .bind(event.kind.as_u64() as i32)
+    .bind(event.kind.as_u16() as i32)
     .bind(&event.content)
     .bind(tags_json)
     .bind(event.sig.to_string())
@@ -742,13 +759,13 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
 
     match insert_result {
         Ok(_) => {
-            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
             
             // Handle NIP-09: Event Deletion
-            if event.kind.as_u64() == 5 {
+            if event.kind.as_u16() == 5 {
                 let pubkey = event.pubkey.to_string();
-                for tag in &event.tags {
-                    let t = tag.as_vec();
+                for tag in event.tags.iter() {
+                    let t = tag.as_slice();
                     if t.len() >= 2 && t[0] == "e" {
                         let target_id = &t[1];
                         // Delete the event if it belongs to the same pubkey
@@ -762,7 +779,7 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
             }
 
             // Handle NIP-62: Request to Vanish
-            if event.kind.as_u64() == 62 {
+            if event.kind.as_u16() == 62 {
                 let pubkey = event.pubkey.to_string();
                 
                 // 1. Delete all events from this pubkey
@@ -789,7 +806,7 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
         }
         Err(e) => {
             error!("Failed to save event: {}", e);
-            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: internal error".to_string()).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "error: internal error".to_string()).as_json().into())).await;
         }
     }
 }
@@ -813,7 +830,7 @@ async fn handle_req(
     if let Some(filter) = filters.first() {
         // Filter by kinds
         if let Some(kinds) = &filter.kinds {
-            let kind_list: Vec<String> = kinds.iter().map(|k| k.as_u64().to_string()).collect();
+            let kind_list: Vec<String> = kinds.iter().map(|k| k.as_u16().to_string()).collect();
             if !kind_list.is_empty() {
                 sql.push_str(&format!(" AND kind IN ({})", kind_list.join(",")));
             }
@@ -829,12 +846,12 @@ async fn handle_req(
         
         // Filter by since
         if let Some(since) = filter.since {
-            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since.as_u64()));
+            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since.as_secs()));
         }
         
         // Filter by until
         if let Some(until) = filter.until {
-            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until.as_u64()));
+            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until.as_secs()));
         }
     }
     
@@ -886,7 +903,7 @@ async fn handle_req(
                     // Check if it matches filters
                     let mut matched = false;
                     for filter in &filters {
-                        if filter.match_event(&event) {
+                        if filter.match_event(&event, MatchEventOptions::new()) {
                             matched = true;
                             break;
                         }
@@ -895,16 +912,16 @@ async fn handle_req(
                     if matched {
                         sent_count += 1;
                         info!("handle_req: Sending event {} (kind: {}) to sub_id: {}", event_id, kind, sub_id);
-                        let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json())).await;
+                        let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json().into())).await;
                     }
                 }
             }
             info!("handle_req: Sent {} matching events for sub_id: {}, sending EOSE", sent_count, sub_id);
-            let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json().into())).await;
         }
         Err(e) => {
             error!("Failed to query events: {}", e);
-            let _ = sender.send(Message::Text(RelayMessage::notice(format!("Failed to query events: {}", e)).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::notice(format!("Failed to query events: {}", e)).as_json().into())).await;
         }
     }
 }
@@ -934,47 +951,59 @@ async fn handle_prefix_search_req(
     let until = filter.get("until").and_then(|v| v.as_i64());
     let limit = filter.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
     
+    // Authors must be lowercase hex (full pubkey or prefix). Anything else is
+    // rejected rather than passed to SQL; values are always bound as parameters.
+    let valid_authors: Vec<&String> = authors
+        .iter()
+        .filter(|a| !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .collect();
+    if !authors.is_empty() && valid_authors.is_empty() {
+        let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json().into())).await;
+        return;
+    }
+
     // Build SQL query with prefix support
-    let mut query = String::from(
+    let mut query = sqlx::QueryBuilder::<Postgres>::new(
         "SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())"
     );
-    
+
     // Add kinds filter
     if !kinds.is_empty() {
-        let kinds_str = kinds.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",");
-        query.push_str(&format!(" AND kind IN ({})", kinds_str));
+        query.push(" AND kind = ANY(").push_bind(kinds).push(")");
     }
-    
+
     // Add authors filter with prefix support
-    if !authors.is_empty() {
-        query.push_str(" AND (");
-        let author_conditions: Vec<String> = authors.iter().map(|author| {
+    if !valid_authors.is_empty() {
+        query.push(" AND (");
+        for (i, author) in valid_authors.iter().enumerate() {
+            if i > 0 {
+                query.push(" OR ");
+            }
             if author.len() == 64 {
                 // Full pubkey - exact match
-                format!("pubkey = '{}'", author)
+                query.push("pubkey = ").push_bind(author.to_string());
             } else {
-                // Prefix - use LIKE
-                format!("pubkey LIKE '{}%'", author)
+                // Prefix - use LIKE (hex only, so no wildcards in the value)
+                query.push("pubkey LIKE ").push_bind(format!("{}%", author));
             }
-        }).collect();
-        query.push_str(&author_conditions.join(" OR "));
-        query.push_str(")");
+        }
+        query.push(")");
     }
-    
+
     // Add time filters
     if let Some(since_ts) = since {
-        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since_ts));
+        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") >= ").push_bind(since_ts as f64);
     }
     if let Some(until_ts) = until {
-        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until_ts));
+        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") <= ").push_bind(until_ts as f64);
     }
-    
-    query.push_str(&format!(" ORDER BY \"createdAt\" DESC LIMIT {}", limit));
-    
-    debug!("Prefix search query: {}", query);
-    
+
+    query.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit.clamp(0, 1000));
+
+    debug!("Prefix search query: {}", query.sql());
+
     // Execute query
-    let rows = sqlx::query(&query).fetch_all(&state.db).await;
+    let rows = query.build().fetch_all(&state.db).await;
     
     match rows {
         Ok(rows) => {
@@ -1005,16 +1034,16 @@ async fn handle_prefix_search_req(
                 
                 if let Ok(event) = Event::from_json(&event_json.to_string()) {
                     sent_count += 1;
-                    let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json())).await;
+                    let _ = sender.send(Message::Text(RelayMessage::event(sub_id.clone(), event).as_json().into())).await;
                 }
             }
             
             info!("Sent {} events for prefix search sub_id: {}, sending EOSE", sent_count, sub_id);
-            let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json().into())).await;
         }
         Err(e) => {
             error!("Prefix search query failed: {}", e);
-            let _ = sender.send(Message::Text(RelayMessage::notice(format!("Query error: {}", e)).as_json())).await;
+            let _ = sender.send(Message::Text(RelayMessage::notice("Query error").as_json().into())).await;
         }
     }
 }

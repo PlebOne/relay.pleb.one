@@ -58,12 +58,13 @@ export function AdminWhitelistPanel() {
     }
   );
 
-  useMemo(() => {
-    if (previewQuery.data && !newEntry.displayName) {
-      const name = previewQuery.data.displayName || previewQuery.data.name;
-      if (name) setNewEntry(curr => ({ ...curr, displayName: name }));
-    }
-  }, [previewQuery.data, newEntry.displayName]);
+  // Auto-fill display name from the profile preview (adjusts state during render)
+  const [autofillSource, setAutofillSource] = useState<typeof previewQuery.data>();
+  if (previewQuery.data && !newEntry.displayName && previewQuery.data !== autofillSource) {
+    setAutofillSource(previewQuery.data);
+    const name = previewQuery.data.displayName || previewQuery.data.name;
+    if (name) setNewEntry(curr => ({ ...curr, displayName: name }));
+  }
 
   const listInput = useMemo(() => ({
     query: filters.query.trim() || undefined,
@@ -240,11 +241,11 @@ export function AdminWhitelistPanel() {
         </div>
       ) : null}
 
-      <div className="mt-6 grid gap-4 md:grid-cols-[2fr,3fr]">
+      <div className="mt-6 grid gap-4 md:grid-cols-[2fr_3fr]">
         <div className="rounded-xl border border-green-500/20 bg-black/50 p-4">
           <h3 className="text-sm font-semibold text-green-400">Filters</h3>
           <input
-            className="mt-3 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+            className="mt-3 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
             placeholder="Search npubs, names, notes"
             value={filters.query}
             onChange={(e) => setFilters((current) => ({ ...current, query: e.target.value }))}
@@ -299,14 +300,14 @@ export function AdminWhitelistPanel() {
           >
             <label className="block text-xs uppercase tracking-wide text-green-500/70">npub</label>
             <input
-              className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+              className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
               placeholder="npub1..."
               value={newEntry.npub}
               onChange={(e) => handleNpubChange(e.target.value)}
             />
             {previewQuery.isLoading && <p className="mt-1 text-xs text-gray-500">Fetching metadata...</p>}
             {previewQuery.data && (
-              <div className="mt-2 mb-2 flex items-center gap-2 rounded border border-green-500/20 bg-green-900/10 p-2">
+              <div className="mt-2 mb-2 flex items-center gap-2 rounded-sm border border-green-500/20 bg-green-900/10 p-2">
                 {previewQuery.data.picture && (
                   <img src={previewQuery.data.picture} alt="" className="h-8 w-8 rounded-full" />
                 )}
@@ -320,7 +321,7 @@ export function AdminWhitelistPanel() {
               <div>
                 <label className="block text-xs uppercase tracking-wide text-green-500/70">Display name</label>
                 <input
-                  className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                  className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                   value={newEntry.displayName}
                   onChange={(e) => setNewEntry((current) => ({ ...current, displayName: e.target.value }))}
                 />
@@ -331,7 +332,7 @@ export function AdminWhitelistPanel() {
                   type="number"
                   min={0}
                   max={500}
-                  className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                  className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                   value={newEntry.inviteQuota}
                   onChange={(e) =>
                     setNewEntry((current) => ({ ...current, inviteQuota: Number(e.target.value) }))
@@ -341,7 +342,7 @@ export function AdminWhitelistPanel() {
             </div>
             <label className="block text-xs uppercase tracking-wide text-green-500/70">Notes</label>
             <textarea
-              className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+              className="w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
               rows={2}
               value={newEntry.note}
               onChange={(e) => setNewEntry((current) => ({ ...current, note: e.target.value }))}
@@ -394,7 +395,7 @@ export function AdminWhitelistPanel() {
             </dl>
 
             <form
-              className="mt-4 grid gap-3 md:grid-cols-[2fr,1fr]"
+              className="mt-4 grid gap-3 md:grid-cols-[2fr_1fr]"
               onSubmit={(event) => {
                 event.preventDefault();
                 const formData = new FormData(event.currentTarget);
@@ -407,7 +408,7 @@ export function AdminWhitelistPanel() {
                   name="note"
                   defaultValue={user.whitelistNotes ?? ""}
                   rows={2}
-                  className="mt-1 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                  className="mt-1 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                 />
               </div>
               <div>
@@ -418,7 +419,7 @@ export function AdminWhitelistPanel() {
                   min={0}
                   max={500}
                   defaultValue={user.inviteQuota}
-                  className="mt-1 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-none focus:border-green-400"
+                  className="mt-1 w-full rounded-md border border-green-500/30 bg-black/70 px-3 py-2 text-sm text-white outline-hidden focus:border-green-400"
                 />
                 <GlowingButton className="mt-3 w-full" variant="secondary" disabled={updateStatus.isPending}>
                   Save details

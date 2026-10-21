@@ -116,7 +116,7 @@ export function GlowingButton({
 
   const combinedClassName = `${baseClasses} ${variants[variant]} ${className}`;
 
-  if (asChild && isValidElement(children)) {
+  if (asChild && isValidElement<{ className?: string }>(children)) {
     return cloneElement(children, {
       className: `${combinedClassName} ${children.props.className ?? ""}`.trim(),
     });

@@ -14,7 +14,7 @@ export default function SupportPage() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
+    <main className="min-h-screen bg-linear-to-b from-gray-950 via-black to-gray-950 relative overflow-hidden">
       <MatrixRain />
       <SiteHeader />
 
@@ -35,7 +35,7 @@ export default function SupportPage() {
                     We believe access to censorship-resistant communication should be available to everyone, regardless of their financial situation.
                   </p>
                   <p>
-                    For some, 1,000 sats is pocket change. For others, it's a week's worth of groceries. We want to be open for business no matter what your situation is.
+                    For some, 1,000 sats is pocket change. For others, it&apos;s a week&apos;s worth of groceries. We want to be open for business no matter what your situation is.
                   </p>
                   <p>
                     If you find value in this relay and have the means, please consider supporting its operation. Your contribution helps keep the servers running, the bandwidth flowing, and the access free for those who need it most.
@@ -46,7 +46,7 @@ export default function SupportPage() {
                   {/* Bitcoin Card */}
                   <div className="rounded-xl border border-orange-500/30 bg-black/50 p-6 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                      <span className="text-xs text-orange-500 border border-orange-500/30 rounded px-2 py-1">BITCOIN</span>
+                      <span className="text-xs text-orange-500 border border-orange-500/30 rounded-sm px-2 py-1">BITCOIN</span>
                     </div>
                     
                     <div className="flex flex-col items-center text-center">
@@ -54,14 +54,14 @@ export default function SupportPage() {
                         ₿
                       </div>
                       <h3 className="text-lg font-bold text-orange-400 mb-2">On-Chain</h3>
-                      <div className="bg-black/60 rounded p-3 border border-orange-500/20 mb-4 w-full">
+                      <div className="bg-black/60 rounded-sm p-3 border border-orange-500/20 mb-4 w-full">
                         <code className="text-xs text-orange-300 break-all block">
                           {btcAddress}
                         </code>
                       </div>
                       <button 
                         onClick={() => copyToClipboard(btcAddress)}
-                        className="w-full bg-orange-900/20 hover:bg-orange-900/40 text-orange-400 border border-orange-500/30 px-4 py-2 rounded transition-colors text-sm font-bold"
+                        className="w-full bg-orange-900/20 hover:bg-orange-900/40 text-orange-400 border border-orange-500/30 px-4 py-2 rounded-sm transition-colors text-sm font-bold"
                       >
                         Copy Address
                       </button>
@@ -71,7 +71,7 @@ export default function SupportPage() {
                   {/* Lightning Card */}
                   <div className="rounded-xl border border-yellow-500/30 bg-black/50 p-6 relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-2 opacity-50 group-hover:opacity-100 transition-opacity">
-                      <span className="text-xs text-yellow-500 border border-yellow-500/30 rounded px-2 py-1">LIGHTNING</span>
+                      <span className="text-xs text-yellow-500 border border-yellow-500/30 rounded-sm px-2 py-1">LIGHTNING</span>
                     </div>
                     
                     <div className="flex flex-col items-center text-center">
@@ -79,14 +79,14 @@ export default function SupportPage() {
                         ⚡
                       </div>
                       <h3 className="text-lg font-bold text-yellow-400 mb-2">Lightning Address</h3>
-                      <div className="bg-black/60 rounded p-3 border border-yellow-500/20 mb-4 w-full">
+                      <div className="bg-black/60 rounded-sm p-3 border border-yellow-500/20 mb-4 w-full">
                         <code className="text-xs text-yellow-300 break-all block">
                           {lnAddress}
                         </code>
                       </div>
                       <button 
                         onClick={() => copyToClipboard(lnAddress)}
-                        className="w-full bg-yellow-900/20 hover:bg-yellow-900/40 text-yellow-400 border border-yellow-500/30 px-4 py-2 rounded transition-colors text-sm font-bold"
+                        className="w-full bg-yellow-900/20 hover:bg-yellow-900/40 text-yellow-400 border border-yellow-500/30 px-4 py-2 rounded-sm transition-colors text-sm font-bold"
                       >
                         Copy Address
                       </button>

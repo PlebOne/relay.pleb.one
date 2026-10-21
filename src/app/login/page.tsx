@@ -2,6 +2,7 @@
 
 import { type FormEvent, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import type { Route } from "next";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
@@ -135,7 +136,7 @@ export default function LoginPage() {
           // Check if authentication was successful
           if (result.ok && result.url) {
             setMessage("✓ Login successful");
-            router.push(result.url);
+            router.push(result.url as Route);
             return;
           }
 
@@ -252,7 +253,7 @@ export default function LoginPage() {
 
         if (result.ok && result.url) {
           setMessage("✓ Authenticated successfully");
-          router.push(result.url);
+          router.push(result.url as Route);
           return;
         }
 
@@ -382,7 +383,7 @@ export default function LoginPage() {
                   {isNip07Pending ? "Waiting for signature..." : "🔌 Sign in with Extension"}
                 </GlowingButton>
                 {nip07Error && (
-                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                  <div className="p-3 rounded-sm bg-red-950/30 border border-red-500/40">
                     <p className="text-sm text-red-400">{nip07Error}</p>
                   </div>
                 )}
@@ -407,7 +408,7 @@ export default function LoginPage() {
                 <label className="block text-sm">
                   <span className="block text-gray-400 mb-1">Bunker Connection String</span>
                   <input
-                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
+                    className="w-full rounded-sm bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-green-500 font-mono text-xs"
                     placeholder="bunker://..."
                     value={bunkerUrl}
                     onChange={(e) => setBunkerUrl(e.target.value)}
@@ -422,7 +423,7 @@ export default function LoginPage() {
                   {isNip46Pending ? "Connecting..." : "🔗 Connect Remote Signer"}
                 </GlowingButton>
                 {nip46Error && (
-                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                  <div className="p-3 rounded-sm bg-red-950/30 border border-red-500/40">
                     <p className="text-sm text-red-400">{nip46Error}</p>
                   </div>
                 )}
@@ -447,7 +448,7 @@ export default function LoginPage() {
                 <label className="block text-sm">
                   <span className="block text-gray-400 mb-1">Public Key (npub)</span>
                   <input
-                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-xs"
+                    className="w-full rounded-sm bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-green-500 font-mono text-xs"
                     placeholder="npub1..."
                     value={npub}
                     onChange={(e) => setNpub(e.target.value)}
@@ -459,7 +460,7 @@ export default function LoginPage() {
                   <span className="block text-gray-400 mb-1">Password</span>
                   <input
                     type="password"
-                    className="w-full rounded bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    className="w-full rounded-sm bg-black/50 border border-green-500/40 px-3 py-2 focus:outline-hidden focus:ring-2 focus:ring-green-500"
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -476,7 +477,7 @@ export default function LoginPage() {
                   {isCredentialsPending ? "Verifying..." : "🔒 Sign in with Password"}
                 </GlowingButton>
                 {credentialsError && (
-                  <div className="p-3 rounded bg-red-950/30 border border-red-500/40">
+                  <div className="p-3 rounded-sm bg-red-950/30 border border-red-500/40">
                     <p className="text-sm text-red-400">{credentialsError}</p>
                   </div>
                 )}
@@ -489,7 +490,7 @@ export default function LoginPage() {
           </div>
 
           {message && (
-            <div className="text-center p-4 rounded bg-green-950/30 border border-green-500/40">
+            <div className="text-center p-4 rounded-sm bg-green-950/30 border border-green-500/40">
               <p className="text-sm text-green-400">{message}</p>
             </div>
           )}
