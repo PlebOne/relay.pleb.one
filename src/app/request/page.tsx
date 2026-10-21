@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { PlebOneCommunity } from "@/components/ui/plebone-community";
 import { safeJsonParse } from "@/lib/fetch-utils";
 
 export default function RequestInvitePage() {
@@ -100,6 +101,7 @@ export default function RequestInvitePage() {
       <section className="py-16 relative z-10">
         <div className="container mx-auto px-4">
           <div className="max-w-3xl mx-auto">
+            <PlebOneCommunity variant="request" />
             <TerminalWindow title="request-invite.sh">
               <div className="space-y-8">
                 <div>

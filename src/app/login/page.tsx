@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { MatrixRain, TerminalWindow, GlowingButton } from "@/components/ui/cypherpunk";
+import { PlebOneCommunity } from "@/components/ui/plebone-community";
 import { Nip46Client, parseBunkerUrl } from "@/lib/nip46-client";
 
 // NIP-07 types are declared globally in src/types/nostr.d.ts
@@ -358,6 +359,8 @@ export default function LoginPage() {
               Need an invite? <Link href="/request" className="text-green-300 underline decoration-dotted">Request access instead</Link>.
             </p>
           </div>
+
+          <PlebOneCommunity variant="login" />
 
           <div className="grid gap-6 md:grid-cols-3">
             {/* NIP-07 Browser Extension */}
