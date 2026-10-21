@@ -52,7 +52,7 @@ async fn main() {
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
     let redis_pool = match RedisConfig::from_url(&redis_url).create_pool(Some(Runtime::Tokio1)) {
         Ok(pool) => {
-            info!("Redis connection pool initialized: {}", redis_url);
+            info!("Redis connection pool initialized");
             Some(pool)
         }
         Err(e) => {
