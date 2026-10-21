@@ -2,20 +2,32 @@
 
 ## Overview
 
-For NIP-05 to work, you need proper DNS configuration for both domains:
-- `pleb.one` (main website)
-- `relay.pleb.one` (relay server)
+> **Update (Oct 2026):** bare `pleb.one` is now a static GitHub Pages site and no longer serves NIP-05.
+> NIP-05 is served by the relay app on `relay.pleb.one`, `id.pleb.one`, `me.pleb.one`, `nostr.pleb.one`
+> and `based.pleb.one`. All five need A records pointing at the relay server. `pleb.one` itself is
+> managed separately (GitHub Pages) and is not covered here. The scenarios further down describe the
+> old pleb.one proxy setup and are kept for reference only.
+
+**DNS records for NIP-05 (relay server):**
+```
+Type    Name         Value                   TTL
+A       relay        <relay-server-ip>       3600
+A       id           <relay-server-ip>       3600
+A       me           <relay-server-ip>       3600
+A       nostr        <relay-server-ip>       3600
+A       based        <relay-server-ip>       3600
+```
 
 ## Current Architecture
 
 ```
 User's Nostr Client
     ↓
-Requests: https://pleb.one/.well-known/nostr.json?name=alice
+Requests: https://id.pleb.one/.well-known/nostr.json?name=alice
     ↓
-pleb.one server (proxies to relay.pleb.one)
+Caddy on the relay server (relay/id/me/nostr/based.pleb.one blocks)
     ↓
-relay.pleb.one server (queries database, returns pubkey)
+relay app (checks host == user's chosen domain, returns pubkey)
 ```
 
 ## DNS Requirements
@@ -183,7 +195,7 @@ curl -I https://relay.pleb.one
 
 **Test NIP-05 endpoint:**
 ```bash
-curl https://pleb.one/.well-known/nostr.json?name=test
+curl https://id.pleb.one/.well-known/nostr.json?name=test
 # Should return: {"names":{}}
 ```
 
@@ -306,13 +318,14 @@ This shows the full DNS resolution path.
 
 ### Issue: NIP-05 returns 404
 
-**Symptom:** `curl https://pleb.one/.well-known/nostr.json?name=test` returns 404
+**Symptom:** `curl https://id.pleb.one/.well-known/nostr.json?name=test` returns 404
 
 **Fix:**
-1. Verify DNS: `dig pleb.one`
-2. Check Caddyfile on pleb.one has proxy config
-3. Verify relay.pleb.one is accessible: `curl https://relay.pleb.one/health`
-4. Check Caddy logs on both servers
+1. 404 `{"names":{}}` is correct if no enabled user picked that name on that domain
+2. Verify DNS: `dig id.pleb.one`
+3. Check the relay server's Caddyfile has the id/me/nostr/based.pleb.one block
+4. Verify relay.pleb.one is accessible: `curl https://relay.pleb.one/health`
+5. Check Caddy logs
 
 ### Issue: WebSocket connection fails
 
@@ -348,8 +361,9 @@ After DNS configuration:
 - [ ] `curl https://pleb.one` returns 200 OK
 - [ ] `curl https://relay.pleb.one` returns 200 OK
 - [ ] SSL certificates are valid (no browser warnings)
-- [ ] `curl https://pleb.one/.well-known/nostr.json?name=test` returns JSON
-- [ ] CORS header present: `curl -I https://pleb.one/.well-known/nostr.json?name=test | grep -i access`
+- [ ] `dig id.pleb.one` (and me, nostr, based) returns the relay server IP
+- [ ] `curl https://id.pleb.one/.well-known/nostr.json?name=test` returns JSON
+- [ ] CORS header present: `curl -I https://id.pleb.one/.well-known/nostr.json?name=test | grep -i access`
 
 ## What IP Addresses Do I Use?
 
@@ -396,7 +410,7 @@ relay.pleb.one  →  <relay-server-ip>
 ### After DNS Setup:
 1. Wait 5-60 minutes for propagation
 2. Caddy will auto-issue SSL certificates
-3. Test with: `curl https://pleb.one/.well-known/nostr.json?name=test`
+3. Test with: `curl https://id.pleb.one/.well-known/nostr.json?name=test`
 4. Deploy NIP-05 application code
 5. Test end-to-end with real user
 

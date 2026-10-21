@@ -95,6 +95,35 @@
     # }
 }
 
+# NIP-05-only subdomains (users pick one of these or relay.pleb.one in the dashboard)
+# Caddy's reverse_proxy passes the client Host header through unchanged and sets
+# X-Forwarded-Host to it, so the app sees e.g. id.pleb.one and answers for that domain.
+# CORS headers are set by the app.
+id.pleb.one, me.pleb.one, nostr.pleb.one, based.pleb.one {
+    handle /.well-known/nostr.json* {
+        rewrite * /api{uri}
+        reverse_proxy app:3000
+    }
+
+    # Everything else goes to the main site
+    handle {
+        redir https://pleb.one{uri}
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        -Server
+    }
+
+    encode gzip zstd
+
+    log {
+        output file /var/log/caddy/access.log
+        format json
+    }
+}
+
 # Development configuration (if not using custom domain)
 localhost:80 {
     reverse_proxy app:3000
