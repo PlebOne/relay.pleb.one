@@ -63,7 +63,7 @@ function Meter({ used, total }: { used: number; total: number }) {
   const value = pct(used, total);
   const color = value >= 90 ? "bg-red-500" : value >= 75 ? "bg-yellow-500" : "bg-green-500";
   return (
-    <div className="mt-2 h-2 w-full overflow-hidden rounded bg-green-900/30">
+    <div className="mt-2 h-2 w-full overflow-hidden rounded-sm bg-green-900/30">
       <div className={`h-full ${color}`} style={{ width: `${Math.min(100, value)}%` }} />
     </div>
   );

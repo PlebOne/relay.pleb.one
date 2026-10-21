@@ -33,7 +33,7 @@ export interface HostMetrics {
 
 async function readProc(file: string) {
   try {
-    return await fs.readFile(path.join(HOST_PROC, file), "utf8");
+    return await fs.readFile(path.join(/*turbopackIgnore: true*/ HOST_PROC, file), "utf8");
   } catch {
     return null;
   }
@@ -108,7 +108,7 @@ async function readNetwork(): Promise<HostMetrics["network"]> {
 
 async function readDisk(): Promise<HostMetrics["disk"]> {
   try {
-    const stats = await fs.statfs(HOST_DISK);
+    const stats = await fs.statfs(/*turbopackIgnore: true*/ HOST_DISK);
     const totalBytes = stats.blocks * stats.bsize;
     return {
       totalBytes,

@@ -298,4 +298,33 @@ If a mount is missing (e.g. local `npm run dev`) those fields show as
 `HOST_DISK_PATH=.` work on a Linux host.
 
 No database migration is needed. Deploy with
-`docker compose up -d --build app relay`.
+`docker compose up -d --build app relay`. The app and relay containers still run as
+uid 1001; neither gets the Docker socket.
+
+## Published ports and Redis password
+
+`docker-compose.yml` does not publish service ports on all addresses.
+Caddy reaches `app:3000` and `relay:3001` over the internal `relay-network`.
+
+| Service | Before PR #6 | Now |
+| --- | --- | --- |
+| postgres | `5432:5432` | `127.0.0.1:5432:5432` (host-side `psql` / `npm run db:push`) |
+| redis | `6379:6379` | not published |
+| app | `3000:3000` | `127.0.0.1:3000:3000` |
+| relay | `3001:3001` | `127.0.0.1:3001:3001` |
+| relay stats | n/a | `3002`, internal only |
+| lnd (`lightning` profile) | `9735`, `10009`, `8080` | `127.0.0.1:` each |
+| bitcoind (`lightning` profile) | `8332`, `18333` | `127.0.0.1:` each |
+
+Only Caddy's 80/443 are public. With the `lightning` profile, the lnd and
+bitcoind P2P ports are loopback too, so those nodes make outbound peer
+connections only; publish `9735` / `18333` on all addresses again if inbound
+peers are needed. The bitcoind RPC (static `bitcoin`/`bitcoin` credentials)
+and lnd gRPC/REST must stay off public addresses. Anything that used to connect to these ports
+from another machine has to go through SSH port forwarding instead.
+
+Optional Redis auth: set `REDIS_PASSWORD` in `.env`. Redis then starts with
+`--requirepass`, the healthcheck authenticates, and the app and relay read the
+same variable (it overrides any password in `REDIS_URL`). Leave it unset or
+empty to keep Redis without auth. Changing it requires recreating the
+containers: `docker compose up -d --force-recreate redis app relay`.
