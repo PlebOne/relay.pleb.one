@@ -9,6 +9,7 @@ import { AdminMessageBoard } from "@/components/dashboard/admin-message-board";
 import { NipStatusPanel } from "@/components/dashboard/nip-status-panel";
 import { RelayInfoPanel } from "@/components/dashboard/relay-info-panel";
 import { Nip05Panel } from "@/components/dashboard/nip05-panel";
+import { ResourcesPanel } from "@/components/dashboard/resources-panel";
 import { GlowingButton } from "@/components/ui/cypherpunk";
 
 interface DashboardTabsProps {
@@ -16,7 +17,7 @@ interface DashboardTabsProps {
 }
 
 export function DashboardTabs({ session }: DashboardTabsProps) {
-  const [activeTab, setActiveTab] = useState<"feed" | "invites" | "setup" | "nips" | "identity" | "admin">("feed");
+  const [activeTab, setActiveTab] = useState<"feed" | "invites" | "setup" | "nips" | "identity" | "resources" | "admin">("feed");
   const isAdmin = session.user.isAdmin;
 
   return (
@@ -72,6 +73,16 @@ export function DashboardTabs({ session }: DashboardTabsProps) {
           }`}
         >
           Identity
+        </button>
+        <button
+          onClick={() => setActiveTab("resources")}
+          className={`rounded-t-lg px-6 py-3 text-sm font-bold uppercase tracking-wider transition-all ${
+            activeTab === "resources"
+              ? "bg-green-900/20 text-green-400 border-b-2 border-green-500"
+              : "text-gray-500 hover:text-green-300 hover:bg-green-900/10"
+          }`}
+        >
+          Resources
         </button>
         {isAdmin && (
           <button
@@ -137,6 +148,12 @@ export function DashboardTabs({ session }: DashboardTabsProps) {
         {activeTab === "identity" && (
           <div className="mx-auto max-w-3xl">
             <Nip05Panel />
+          </div>
+        )}
+
+        {activeTab === "resources" && (
+          <div className="mx-auto max-w-6xl">
+            <ResourcesPanel isAdmin={isAdmin} />
           </div>
         )}
 
