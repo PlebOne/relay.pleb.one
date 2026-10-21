@@ -1,6 +1,7 @@
 -- One-time cleanup: delete superseded versions of NIP-01 replaceable
 -- (0, 3, 10000-19999) and addressable (30000-39999) events stored before
--- relay-rs enforced replacement. No other kinds are touched.
+-- relay-rs enforced replacement, and ephemeral events (20000-29999) that
+-- relay-rs used to store. No other kinds are touched.
 --
 -- Winner per (pubkey, kind[, first d tag value, missing = '']): newest createdAt
 -- (whole seconds), ties go to the lowest eventId. Same rules as relay-rs
@@ -44,5 +45,10 @@ DELETE FROM events e
 USING superseded_events s
 WHERE e."eventId" = s."eventId"
   AND (e.kind IN (0, 3) OR e.kind BETWEEN 10000 AND 19999 OR e.kind BETWEEN 30000 AND 39999);
+
+-- Ephemeral events (20000-29999) are never stored by relay-rs any more.
+SELECT kind, count(*) AS deleting_ephemeral FROM events WHERE kind BETWEEN 20000 AND 29999 GROUP BY kind ORDER BY kind;
+
+DELETE FROM events WHERE kind BETWEEN 20000 AND 29999;
 
 COMMIT;

@@ -1,6 +1,8 @@
--- Read-only: count superseded versions of NIP-01 replaceable (0, 3, 10000-19999)
--- and addressable (30000-39999) events that cleanup-superseded-replaceable.sql
--- would delete, grouped by kind. Changes nothing.
+-- Read-only: count what cleanup-superseded-replaceable.sql would delete.
+-- Changes nothing. Two result sets:
+--   1. superseded versions of NIP-01 replaceable (0, 3, 10000-19999) and
+--      addressable (30000-39999) events, grouped by kind
+--   2. stored ephemeral events (20000-29999, never meant to be stored), grouped by kind
 --
 -- Winner per (pubkey, kind[, first d tag value, missing = '']): newest createdAt
 -- (whole seconds), ties go to the lowest eventId. Same rules as relay-rs
@@ -30,5 +32,12 @@ ranked AS (
 SELECT kind, count(*) AS superseded
 FROM ranked
 WHERE rn > 1
+GROUP BY kind
+ORDER BY kind;
+
+-- Ephemeral events (20000-29999) that should never have been stored.
+SELECT kind, count(*) AS ephemeral_stored
+FROM events
+WHERE kind BETWEEN 20000 AND 29999
 GROUP BY kind
 ORDER BY kind;

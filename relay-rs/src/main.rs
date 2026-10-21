@@ -9,7 +9,7 @@ use axum::{
     Router,
 };
 use futures::{sink::SinkExt, stream::StreamExt};
-use nostr::prelude::{ClientMessage, Event, EventBuilder, Filter, FinalizeEvent, Keys, Kind, MatchEventOptions, RelayMessage, SubscriptionId, Tag};
+use nostr::prelude::{ClientMessage, Event, EventBuilder, Filter, FinalizeEvent, Keys, Kind, MatchEventOptions, RelayMessage, SubscriptionId, Tag, Timestamp};
 use sqlx::{postgres::PgPoolOptions, Pool, Postgres, Row};
 use std::{
     collections::HashMap,
@@ -27,7 +27,9 @@ use deadpool_redis::{Pool as RedisPool, Config as RedisConfig, ConnectionInfo as
 use redis::AsyncCommands;
 use tower_http::compression::CompressionLayer;
 
+mod config;
 mod replaceable;
+use config::RelayConfig;
 use replaceable::StoreOutcome;
 
 // Cache TTL constants
@@ -43,6 +45,7 @@ struct AppState {
     redis: Option<RedisPool>,
     connections: Arc<AtomicUsize>,
     started_at: Instant,
+    config: RelayConfig,
 }
 
 /// Decrements the open-connection counter when a socket handler exits.
@@ -106,7 +109,9 @@ async fn main() {
         redis: redis_pool,
         connections: Arc::new(AtomicUsize::new(0)),
         started_at: Instant::now(),
+        config: RelayConfig::from_env(),
     });
+    info!("Relay config: {:?}", state.config);
 
     // NIP-66: Relay Monitor Task
     let monitor_state = state.clone();
@@ -165,10 +170,7 @@ async fn main() {
         }
     });
 
-    let app = Router::new()
-        .route("/", get(handler))
-        .layer(CompressionLayer::new()) // Enable gzip/br/deflate compression for HTTP responses
-        .with_state(state);
+    let app = relay_router(state);
 
     let port = std::env::var("RELAY_PORT").unwrap_or_else(|_| "3001".to_string());
     let addr: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
@@ -178,24 +180,31 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
+fn relay_router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/", get(handler))
+        .layer(CompressionLayer::new()) // Enable gzip/br/deflate compression for HTTP responses
+        .with_state(state)
+}
+
 async fn handler(
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
     headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> Response {
     if let Ok(ws) = ws {
-        return ws.on_upgrade(|socket| handle_socket(socket, state)).into_response();
+        // Cap incoming messages/frames just above the event size cap.
+        let max = state.config.max_message_length;
+        return ws
+            .max_message_size(max)
+            .max_frame_size(max)
+            .on_upgrade(|socket| handle_socket(socket, state))
+            .into_response();
     }
 
     if let Some(accept) = headers.get("accept") {
         if accept.to_str().unwrap_or("").contains("application/nostr+json") {
-            return Json(serde_json::json!({
-                "name": "Relay Pleb One",
-                "description": "A Rust-based Nostr Relay",
-                "supported_nips": [1, 9, 11, 15, 17, 20, 23, 33, 40, 42, 51, 56, 62, 65, 66, 77, 86],
-                "software": "relay-rs",
-                "version": "0.1.0"
-            })).into_response();
+            return Json(config::relay_info(&state.config)).into_response();
         }
     }
 
@@ -322,8 +331,14 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                             }
                                         }
                                     }
+                                } else {
+                                    send_notice(&tx_internal, "invalid: empty message").await;
                                 }
+                            } else {
+                                send_notice(&tx_internal, "invalid: message must be a JSON array").await;
                             }
+                        } else {
+                            send_notice(&tx_internal, "invalid: could not parse message as JSON").await;
                         }
                     }
                     Some(Ok(Message::Close(_))) => break,
@@ -412,7 +427,7 @@ async fn handle_client_message(
             let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "auth-success".to_string()).as_json().into())).await;
         }
         _ => {
-            // Other messages
+            send_notice(sender, "unsupported: message type not supported").await;
         }
     }
 }
@@ -429,6 +444,7 @@ async fn handle_nip86(
     let params = val.get("params").and_then(|v| v.as_array());
 
     if id.is_none() || method.is_none() {
+        send_notice(sender, "invalid: unknown message").await;
         return;
     }
     let id = id.unwrap();
@@ -597,6 +613,10 @@ fn handle_nip77_close(
     sessions.remove(sub_id);
 }
 
+async fn send_notice(sender: &tokio::sync::mpsc::Sender<Message>, message: &str) {
+    let _ = sender.send(Message::Text(RelayMessage::notice(message).as_json().into())).await;
+}
+
 // ============ Redis Cache Helpers ============
 
 /// Check if a user is whitelisted (with Redis caching)
@@ -713,7 +733,16 @@ async fn invalidate_whitelist_cache(state: &Arc<AppState>, pubkey: &str) {
 
 async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync::mpsc::Sender<Message>) {
     info!("Received EVENT from pubkey: {}, kind: {}", event.pubkey, event.kind);
-    
+
+    // Size and timestamp limits (advertised in NIP-11 `limitation`)
+    let limits = config::check_event_size(event.as_json().len(), state.config.max_event_size).and_then(|_| {
+        config::check_created_at(event.created_at.as_secs(), Timestamp::now().as_secs(), state.config.created_at_upper_limit)
+    });
+    if let Err(reason) = limits {
+        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, reason.to_string()).as_json().into())).await;
+        return;
+    }
+
     // 1. Verify signature
     if let Err(e) = event.verify() {
         let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, format!("Invalid signature: {}", e)).as_json().into())).await;
@@ -742,6 +771,13 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
     
     if !is_admin && !is_active {
         let _ = sender.send(Message::Text(RelayMessage::ok(event.id, false, "blocked: user not whitelisted".to_string()).as_json().into())).await;
+        return;
+    }
+
+    // Ephemeral kinds (20000-29999): forward to live subscribers, never store.
+    if config::is_ephemeral(event.kind.as_u16()) {
+        let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
+        let _ = state.tx.send(event);
         return;
     }
 
@@ -821,6 +857,10 @@ async fn handle_req(
     sender: &tokio::sync::mpsc::Sender<Message>,
 ) {
     info!("Received REQ sub_id: {}, filters: {:?}", sub_id, filters);
+    if !subscriptions.contains_key(&sub_id.to_string()) && subscriptions.len() >= state.config.max_subscriptions {
+        let _ = sender.send(Message::Text(RelayMessage::closed(sub_id, "error: too many subscriptions").as_json().into())).await;
+        return;
+    }
     subscriptions.insert(sub_id.to_string(), filters.clone());
 
     // Build SQL query based on filters
@@ -859,15 +899,8 @@ async fn handle_req(
     
     // Order and limit
     sql.push_str(" ORDER BY \"createdAt\" DESC");
-    if let Some(filter) = filters.first() {
-        if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit.min(500))); // Cap at 500
-        } else {
-            sql.push_str(" LIMIT 100");
-        }
-    } else {
-        sql.push_str(" LIMIT 100");
-    }
+    let limit = state.config.clamp_limit(filters.first().and_then(|f| f.limit));
+    sql.push_str(&format!(" LIMIT {}", limit));
     
     debug!("Executing query: {}", sql);
     
@@ -951,7 +984,7 @@ async fn handle_prefix_search_req(
     
     let since = filter.get("since").and_then(|v| v.as_i64());
     let until = filter.get("until").and_then(|v| v.as_i64());
-    let limit = filter.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
+    let limit = state.config.clamp_limit(filter.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize)) as i64;
     
     // Authors must be lowercase hex (full pubkey or prefix). Anything else is
     // rejected rather than passed to SQL; values are always bound as parameters.
@@ -1000,7 +1033,7 @@ async fn handle_prefix_search_req(
         query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") <= ").push_bind(until_ts as f64);
     }
 
-    query.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit.clamp(0, 1000));
+    query.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit);
 
     debug!("Prefix search query: {}", query.sql());
 
@@ -1050,3 +1083,331 @@ async fn handle_prefix_search_req(
     }
 }
 
+
+/// End-to-end tests over a real websocket. Tests marked "no DB" run anywhere;
+/// the rest are skipped unless TEST_DATABASE_URL is set (scripts/test-relay-db.sh).
+#[cfg(test)]
+mod e2e_tests {
+    use super::*;
+    use std::collections::HashMap;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
+
+    type Ws = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+    fn test_config(vars: &[(&str, &str)]) -> RelayConfig {
+        let m: HashMap<String, String> = vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        RelayConfig::from_lookup(|k| m.get(k).cloned())
+    }
+
+    /// Start a relay on a random port. With `need_db`, returns None when
+    /// TEST_DATABASE_URL is not set; otherwise uses a pool that never connects.
+    async fn start(config: RelayConfig, need_db: bool) -> Option<(SocketAddr, Pool<Postgres>)> {
+        let db = match std::env::var("TEST_DATABASE_URL") {
+            Ok(url) => PgPoolOptions::new().max_connections(10).connect(&url).await.expect("connect TEST_DATABASE_URL"),
+            Err(_) if need_db => return None,
+            Err(_) => PgPoolOptions::new()
+                .acquire_timeout(Duration::from_millis(200))
+                .connect_lazy("postgres://none:none@127.0.0.1:1/none")
+                .unwrap(),
+        };
+        let (tx, _rx) = broadcast::channel(1000);
+        let state = Arc::new(AppState {
+            db: db.clone(),
+            tx,
+            redis: None,
+            connections: Arc::new(AtomicUsize::new(0)),
+            started_at: Instant::now(),
+            config,
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, relay_router(state)).await.unwrap() });
+        Some((addr, db))
+    }
+
+    /// Connect and return the socket plus the NIP-42 challenge.
+    async fn connect(addr: SocketAddr) -> (Ws, String) {
+        let (mut ws, _) = connect_async(format!("ws://{}/", addr)).await.unwrap();
+        let auth = recv(&mut ws).await.expect("AUTH challenge");
+        assert_eq!(auth[0], "AUTH");
+        let challenge = auth[1].as_str().unwrap().to_string();
+        (ws, challenge)
+    }
+
+    /// Next JSON text message (None on close/error/timeout).
+    async fn recv(ws: &mut Ws) -> Option<serde_json::Value> {
+        loop {
+            match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
+                Ok(Some(Ok(WsMessage::Text(t)))) => return serde_json::from_str(t.as_str()).ok(),
+                Ok(Some(Ok(WsMessage::Ping(_) | WsMessage::Pong(_)))) => continue,
+                _ => return None,
+            }
+        }
+    }
+
+    /// Read until a message matches `pred`.
+    async fn recv_until(ws: &mut Ws, pred: impl Fn(&serde_json::Value) -> bool) -> serde_json::Value {
+        loop {
+            let m = recv(ws).await.expect("expected message before timeout/close");
+            if pred(&m) {
+                return m;
+            }
+        }
+    }
+
+    async fn send(ws: &mut Ws, v: serde_json::Value) {
+        ws.send(WsMessage::Text(v.to_string().into())).await.unwrap();
+    }
+
+    async fn send_raw(ws: &mut Ws, s: &str) {
+        ws.send(WsMessage::Text(s.to_string().into())).await.unwrap();
+    }
+
+    /// Publish and return the OK message for it.
+    async fn publish(ws: &mut Ws, e: &Event) -> (bool, String) {
+        send(ws, serde_json::json!(["EVENT", e])).await;
+        let id = e.id.to_hex();
+        let ok = recv_until(ws, |m| m[0] == "OK" && m[1] == id.as_str()).await;
+        (ok[2].as_bool().unwrap(), ok[3].as_str().unwrap().to_string())
+    }
+
+    /// Send a REQ and collect events until EOSE.
+    async fn req(ws: &mut Ws, sub: &str, filter: serde_json::Value) -> Vec<serde_json::Value> {
+        send(ws, serde_json::json!(["REQ", sub, filter])).await;
+        let mut events = Vec::new();
+        loop {
+            let m = recv(ws).await.expect("EOSE");
+            if m[0] == "EOSE" && m[1] == sub {
+                return events;
+            }
+            if m[0] == "EVENT" && m[1] == sub {
+                events.push(m[2].clone());
+            }
+        }
+    }
+
+    fn ev(keys: &Keys, kind: u16, created_at: u64, content: &str, tags: Vec<Tag>) -> Event {
+        EventBuilder::new(Kind::from(kind), content)
+            .tags(tags)
+            .custom_created_at(Timestamp::from(created_at))
+            .finalize(keys)
+            .unwrap()
+    }
+
+    fn now() -> u64 {
+        Timestamp::now().as_secs()
+    }
+
+    async fn whitelisted(db: &Pool<Postgres>) -> Keys {
+        let keys = Keys::generate();
+        sqlx::query("INSERT INTO users (id, npub, pubkey, \"updatedAt\", \"whitelistStatus\") VALUES ($1, $2, $2, NOW(), 'ACTIVE')")
+            .bind(nanoid::nanoid!())
+            .bind(keys.public_key().to_hex())
+            .execute(db)
+            .await
+            .unwrap();
+        keys
+    }
+
+    async fn count_rows(db: &Pool<Postgres>, keys: &Keys, kind: u16) -> i64 {
+        sqlx::query("SELECT count(*) AS n FROM events WHERE pubkey = $1 AND kind = $2")
+            .bind(keys.public_key().to_hex())
+            .bind(kind as i32)
+            .fetch_one(db)
+            .await
+            .unwrap()
+            .get("n")
+    }
+
+    // ---------- no DB ----------
+
+    #[tokio::test]
+    async fn nip11_document_reflects_config() {
+        let cfg = test_config(&[("MAX_SUBSCRIPTIONS_PER_CONNECTION", "7")]);
+        let (addr, _) = start(cfg.clone(), false).await.unwrap();
+        let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
+        s.write_all(b"GET / HTTP/1.1\r\nHost: relay\r\nAccept: application/nostr+json\r\nConnection: close\r\n\r\n").await.unwrap();
+        let mut resp = String::new();
+        s.read_to_string(&mut resp).await.unwrap();
+        let body = &resp[resp.find("\r\n\r\n").unwrap() + 4..];
+        let info: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(info["pubkey"], "8dc8688200b447ec2e4018ea5e42dc5d480940cb3f19ca8f361d28179dc4ba5e");
+        assert_eq!(info["contact"], "https://relay.pleb.one");
+        assert_eq!(info["icon"], "https://relay.pleb.one/android-chrome-512x512.png");
+        assert_eq!(info["limitation"]["max_subscriptions"], 7);
+        assert_eq!(info["limitation"]["max_message_length"], cfg.max_message_length);
+        assert_eq!(info["limitation"]["max_limit"], cfg.max_limit);
+        assert_eq!(info["limitation"]["created_at_upper_limit"], 900);
+        assert_eq!(info["limitation"]["auth_required"], false);
+        assert_eq!(info["limitation"]["restricted_writes"], true);
+    }
+
+    #[tokio::test]
+    async fn invalid_and_unknown_messages_get_notice() {
+        let (addr, _) = start(RelayConfig::default(), false).await.unwrap();
+        let (mut ws, _) = connect(addr).await;
+        for raw in ["not json", "{bad", "42", "\"str\"", "[]", "[\"FOO\", 1]", "{\"hello\": 1}", "[\"COUNT\", \"c\", {}]"] {
+            send_raw(&mut ws, raw).await;
+            let m = recv(&mut ws).await.unwrap_or_else(|| panic!("no reply to {}", raw));
+            assert_eq!(m[0], "NOTICE", "reply to {}: {}", raw, m);
+        }
+    }
+
+    #[tokio::test]
+    async fn rejects_future_created_at() {
+        let (addr, _) = start(RelayConfig::default(), false).await.unwrap();
+        let (mut ws, _) = connect(addr).await;
+        let k = Keys::generate();
+        let e = ev(&k, 1, now() + 901 + 60, "from the future", vec![]);
+        assert_eq!(publish(&mut ws, &e).await, (false, "invalid: created_at too far in the future".to_string()));
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_event_and_message() {
+        let cfg = test_config(&[("MAX_EVENT_SIZE", "2000")]); // message cap 4000
+        let (addr, _) = start(cfg, false).await.unwrap();
+        let (mut ws, _) = connect(addr).await;
+        let k = Keys::generate();
+        let big = ev(&k, 1, now(), &"x".repeat(2500), vec![]);
+        assert_eq!(publish(&mut ws, &big).await, (false, "invalid: event too large".to_string()));
+        // Over the websocket cap: the connection is dropped.
+        send_raw(&mut ws, &format!("[\"NOTICE\",\"{}\"]", "y".repeat(5000))).await;
+        assert!(recv(&mut ws).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn nip42_auth_unchanged() {
+        let (addr, _) = start(RelayConfig::default(), false).await.unwrap();
+        let (mut ws, challenge) = connect(addr).await;
+        let k = Keys::generate();
+        let bad = ev(&k, 22242, now(), "", vec![Tag::parse(vec!["challenge", "wrong"]).unwrap()]);
+        send(&mut ws, serde_json::json!(["AUTH", bad])).await;
+        let m = recv(&mut ws).await.unwrap();
+        assert_eq!((m[0].as_str(), m[2].as_bool(), m[3].as_str()), (Some("OK"), Some(false), Some("error: invalid challenge")));
+        let good = ev(&k, 22242, now(), "", vec![Tag::parse(vec!["challenge", challenge.as_str()]).unwrap()]);
+        send(&mut ws, serde_json::json!(["AUTH", good])).await;
+        let m = recv(&mut ws).await.unwrap();
+        assert_eq!((m[2].as_bool(), m[3].as_str()), (Some(true), Some("auth-success")));
+    }
+
+    // ---------- DB ----------
+
+    #[tokio::test]
+    async fn db_whitelist_unchanged() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let (mut ws, _) = connect(addr).await;
+        let stranger = Keys::generate();
+        assert_eq!(publish(&mut ws, &ev(&stranger, 1, now(), "hi", vec![])).await, (false, "blocked: user not whitelisted".to_string()));
+        let k = whitelisted(&db).await;
+        assert_eq!(publish(&mut ws, &ev(&k, 1, now(), "hi", vec![])).await, (true, String::new()));
+    }
+
+    #[tokio::test]
+    async fn db_ephemeral_forwarded_not_stored() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut sub, _) = connect(addr).await;
+        let (mut pubr, _) = connect(addr).await;
+        let author = k.public_key().to_hex();
+        assert!(req(&mut sub, "eph", serde_json::json!({"kinds": [20001], "authors": [author]})).await.is_empty());
+        let e = ev(&k, 20001, now(), "ephemeral", vec![]);
+        assert_eq!(publish(&mut pubr, &e).await, (true, String::new()));
+        let got = recv_until(&mut sub, |m| m[0] == "EVENT").await;
+        assert_eq!(got[2]["id"], e.id.to_hex());
+        assert_eq!(count_rows(&db, &k, 20001).await, 0);
+        // A later REQ does not return it.
+        assert!(req(&mut sub, "eph2", serde_json::json!({"kinds": [20001], "authors": [author]})).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn db_replaceable_qa_cases() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let t = now();
+        // QA first pass: four kind 0 versions, REQ returns one.
+        let mut newest = None;
+        for i in 0..4 {
+            let e = ev(&k, 0, t - 100 + i, &format!("v{}", i), vec![]);
+            assert_eq!(publish(&mut ws, &e).await, (true, String::new()));
+            newest = Some(e);
+        }
+        let newest = newest.unwrap();
+        let filter = serde_json::json!({"kinds": [0], "authors": [k.public_key().to_hex()]});
+        let got = req(&mut ws, "k0", filter.clone()).await;
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["id"], newest.id.to_hex());
+        // QA second pass: a kind 0 a day older than the stored newest is not stored.
+        let old = ev(&k, 0, newest.created_at.as_secs() - 86_400, "a day old", vec![]);
+        assert_eq!(publish(&mut ws, &old).await, (true, "duplicate: have a newer event".to_string()));
+        let got = req(&mut ws, "k0b", filter).await;
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["id"], newest.id.to_hex());
+    }
+
+    #[tokio::test]
+    async fn db_addressable_replacement_unchanged() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let t = now() - 100;
+        for e in [
+            ev(&k, 30023, t, "a1", vec![Tag::identifier("a")]),
+            ev(&k, 30023, t, "b1", vec![Tag::identifier("b")]),
+            ev(&k, 30023, t + 1, "a2", vec![Tag::identifier("a")]),
+        ] {
+            assert_eq!(publish(&mut ws, &e).await, (true, String::new()));
+        }
+        let got = req(&mut ws, "addr", serde_json::json!({"kinds": [30023], "authors": [k.public_key().to_hex()]})).await;
+        let mut contents: Vec<&str> = got.iter().map(|e| e["content"].as_str().unwrap()).collect();
+        contents.sort();
+        assert_eq!(contents, vec!["a2", "b1"]);
+    }
+
+    #[tokio::test]
+    async fn db_nip40_expiration_unchanged() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let expired = ev(&k, 1, now(), "gone", vec![Tag::parse(vec!["expiration".to_string(), (now() - 10).to_string()]).unwrap()]);
+        assert_eq!(publish(&mut ws, &expired).await, (false, "error: event expired".to_string()));
+        let later = ev(&k, 1, now(), "later", vec![Tag::parse(vec!["expiration".to_string(), (now() + 3600).to_string()]).unwrap()]);
+        assert_eq!(publish(&mut ws, &later).await, (true, String::new()));
+        let row = sqlx::query("SELECT \"expiresAt\" IS NOT NULL AS has FROM events WHERE \"eventId\" = $1")
+            .bind(later.id.to_hex())
+            .fetch_one(&db)
+            .await
+            .unwrap();
+        assert!(row.get::<bool, _>("has"));
+    }
+
+    #[tokio::test]
+    async fn db_nip09_deletion_unchanged() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let note = ev(&k, 1, now(), "delete me", vec![]);
+        assert_eq!(publish(&mut ws, &note).await, (true, String::new()));
+        assert_eq!(count_rows(&db, &k, 1).await, 1);
+        let del = ev(&k, 5, now(), "", vec![Tag::parse(vec!["e".to_string(), note.id.to_hex()]).unwrap()]);
+        assert_eq!(publish(&mut ws, &del).await, (true, String::new()));
+        assert_eq!(count_rows(&db, &k, 1).await, 0);
+        assert_eq!(count_rows(&db, &k, 5).await, 1);
+    }
+
+    #[tokio::test]
+    async fn db_max_subscriptions_enforced() {
+        let cfg = test_config(&[("MAX_SUBSCRIPTIONS_PER_CONNECTION", "2")]);
+        let Some((addr, _db)) = start(cfg, true).await else { return };
+        let (mut ws, _) = connect(addr).await;
+        let f = serde_json::json!({"kinds": [1], "limit": 1});
+        req(&mut ws, "s1", f.clone()).await;
+        req(&mut ws, "s2", f.clone()).await;
+        // Re-using an open id is fine.
+        req(&mut ws, "s1", f.clone()).await;
+        send(&mut ws, serde_json::json!(["REQ", "s3", f])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "s3").await;
+        assert_eq!((m[0].as_str(), m[2].as_str()), (Some("CLOSED"), Some("error: too many subscriptions")));
+    }
+}
