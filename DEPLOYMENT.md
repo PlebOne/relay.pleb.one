@@ -312,8 +312,14 @@ Caddy reaches `app:3000` and `relay:3001` over the internal `relay-network`.
 | app | `3000:3000` | `127.0.0.1:3000:3000` |
 | relay | `3001:3001` | `127.0.0.1:3001:3001` |
 | relay stats | n/a | `3002`, internal only |
+| lnd (`lightning` profile) | `9735`, `10009`, `8080` | `127.0.0.1:` each |
+| bitcoind (`lightning` profile) | `8332`, `18333` | `127.0.0.1:` each |
 
-Only Caddy's 80/443 are public. Anything that used to connect to these ports
+Only Caddy's 80/443 are public. With the `lightning` profile, the lnd and
+bitcoind P2P ports are loopback too, so those nodes make outbound peer
+connections only; publish `9735` / `18333` on all addresses again if inbound
+peers are needed. The bitcoind RPC (static `bitcoin`/`bitcoin` credentials)
+and lnd gRPC/REST must stay off public addresses. Anything that used to connect to these ports
 from another machine has to go through SSH port forwarding instead.
 
 Optional Redis auth: set `REDIS_PASSWORD` in `.env`. Redis then starts with

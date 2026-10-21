@@ -140,10 +140,13 @@ services:
       --listen=0.0.0.0:9735
       --restlisten=0.0.0.0:8080
       --tlsextraip=0.0.0.0
+    # Loopback only. The app reaches lnd:10009 / lnd:8080 on the internal network.
+    # P2P is loopback too, so no inbound peer connections (outbound channels still work);
+    # change to "9735:9735" only if this node must accept inbound peers.
     ports:
-      - "9735:9735"  # P2P
-      - "10009:10009"  # gRPC
-      - "8080:8080"    # REST
+      - "127.0.0.1:9735:9735"  # P2P
+      - "127.0.0.1:10009:10009"  # gRPC
+      - "127.0.0.1:8080:8080"    # REST
     volumes:
       - lnd_data:/home/lnd/.lnd
     depends_on:
@@ -166,9 +169,11 @@ services:
       -zmqpubrawblock=tcp://0.0.0.0:28332
       -zmqpubrawtx=tcp://0.0.0.0:28333
       -txindex=1
+    # Loopback only. lnd reaches bitcoind:8332 on the internal network.
+    # P2P is loopback too (outbound sync still works).
     ports:
-      - "8332:8332"  # RPC
-      - "18333:18333"  # P2P testnet
+      - "127.0.0.1:8332:8332"  # RPC
+      - "127.0.0.1:18333:18333"  # P2P testnet
     volumes:
       - bitcoin_data:/home/bitcoin/.bitcoin
     restart: unless-stopped
