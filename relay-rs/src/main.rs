@@ -951,47 +951,59 @@ async fn handle_prefix_search_req(
     let until = filter.get("until").and_then(|v| v.as_i64());
     let limit = filter.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
     
+    // Authors must be lowercase hex (full pubkey or prefix). Anything else is
+    // rejected rather than passed to SQL; values are always bound as parameters.
+    let valid_authors: Vec<&String> = authors
+        .iter()
+        .filter(|a| !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+        .collect();
+    if !authors.is_empty() && valid_authors.is_empty() {
+        let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json().into())).await;
+        return;
+    }
+
     // Build SQL query with prefix support
-    let mut query = String::from(
+    let mut query = sqlx::QueryBuilder::<Postgres>::new(
         "SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())"
     );
-    
+
     // Add kinds filter
     if !kinds.is_empty() {
-        let kinds_str = kinds.iter().map(|k| k.to_string()).collect::<Vec<_>>().join(",");
-        query.push_str(&format!(" AND kind IN ({})", kinds_str));
+        query.push(" AND kind = ANY(").push_bind(kinds).push(")");
     }
-    
+
     // Add authors filter with prefix support
-    if !authors.is_empty() {
-        query.push_str(" AND (");
-        let author_conditions: Vec<String> = authors.iter().map(|author| {
+    if !valid_authors.is_empty() {
+        query.push(" AND (");
+        for (i, author) in valid_authors.iter().enumerate() {
+            if i > 0 {
+                query.push(" OR ");
+            }
             if author.len() == 64 {
                 // Full pubkey - exact match
-                format!("pubkey = '{}'", author)
+                query.push("pubkey = ").push_bind(author.to_string());
             } else {
-                // Prefix - use LIKE
-                format!("pubkey LIKE '{}%'", author)
+                // Prefix - use LIKE (hex only, so no wildcards in the value)
+                query.push("pubkey LIKE ").push_bind(format!("{}%", author));
             }
-        }).collect();
-        query.push_str(&author_conditions.join(" OR "));
-        query.push_str(")");
+        }
+        query.push(")");
     }
-    
+
     // Add time filters
     if let Some(since_ts) = since {
-        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since_ts));
+        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") >= ").push_bind(since_ts as f64);
     }
     if let Some(until_ts) = until {
-        query.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until_ts));
+        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") <= ").push_bind(until_ts as f64);
     }
-    
-    query.push_str(&format!(" ORDER BY \"createdAt\" DESC LIMIT {}", limit));
-    
-    debug!("Prefix search query: {}", query);
-    
+
+    query.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit.clamp(0, 1000));
+
+    debug!("Prefix search query: {}", query.sql());
+
     // Execute query
-    let rows = sqlx::query(&query).fetch_all(&state.db).await;
+    let rows = query.build().fetch_all(&state.db).await;
     
     match rows {
         Ok(rows) => {
@@ -1031,7 +1043,7 @@ async fn handle_prefix_search_req(
         }
         Err(e) => {
             error!("Prefix search query failed: {}", e);
-            let _ = sender.send(Message::Text(RelayMessage::notice(format!("Query error: {}", e)).as_json().into())).await;
+            let _ = sender.send(Message::Text(RelayMessage::notice("Query error").as_json().into())).await;
         }
     }
 }
