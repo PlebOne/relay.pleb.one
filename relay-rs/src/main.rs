@@ -27,6 +27,9 @@ use deadpool_redis::{Pool as RedisPool, Config as RedisConfig, ConnectionInfo as
 use redis::AsyncCommands;
 use tower_http::compression::CompressionLayer;
 
+mod replaceable;
+use replaceable::StoreOutcome;
+
 // Cache TTL constants
 const CACHE_TTL_WHITELIST: u64 = 300; // 5 minutes for whitelist lookups
 const CACHE_TTL_RECENT_EVENTS: u64 = 60; // 1 minute for recent events
@@ -125,33 +128,8 @@ async fn main() {
             let event_builder = EventBuilder::new(Kind::from(30166), "").tags(tags);
             
             if let Ok(event) = event_builder.finalize(&keys) {
-                // Save to DB (Upsert)
-                let tags_json = serde_json::to_value(&event.tags).unwrap_or(serde_json::Value::Null);
-                let created_at = chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
-                    .unwrap_or_default()
-                    .naive_utc()
-                    .and_utc();
-
-                // We use a simplified insert here. In a real NIP-66, we might want to replace the previous one.
-                // Since it's addressable (30166), we should handle replacement logic, but our DB schema is append-only-ish with "ON CONFLICT DO NOTHING" for ID.
-                // For 30166, we should probably delete old ones from this pubkey+d tag or just let them pile up (not ideal).
-                // For this MVP, we'll just insert it.
-                
-                let _ = sqlx::query(
-                    "INSERT INTO events (id, \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\", \"receivedAt\") 
-                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
-                     ON CONFLICT (\"eventId\") DO NOTHING"
-                )
-                .bind(nanoid::nanoid!())
-                .bind(event.id.to_string())
-                .bind(event.pubkey.to_string())
-                .bind(event.kind.as_u16() as i32)
-                .bind(&event.content)
-                .bind(tags_json)
-                .bind(event.sig.to_string())
-                .bind(created_at)
-                .execute(&monitor_state.db)
-                .await;
+                // Save to DB; 30166 is addressable, so this replaces the previous one.
+                let _ = replaceable::store_event(&monitor_state.db, &event, None, nanoid::nanoid!()).await;
 
                 // Broadcast
                 let _ = monitor_state.tx.send(event);
@@ -767,59 +745,22 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
         return;
     }
 
-    // 3. Handle addressable/replaceable events (NIP-33: kinds 30000-39999)
-    let kind_num = event.kind.as_u16();
-    if kind_num >= 30000 && kind_num < 40000 {
-        // Extract d-tag for addressable events
-        let d_tag = event.tags.iter()
-            .find(|t| {
-                let v = t.as_slice();
-                v.len() >= 1 && v[0] == "d"
-            })
-            .map(|t| t.as_slice().get(1).cloned().unwrap_or_default())
-            .unwrap_or_default();
-        
-        // Delete older events with same pubkey + kind + d-tag
-        let _ = sqlx::query(
-            "DELETE FROM events WHERE pubkey = $1 AND kind = $2 AND 
-             EXISTS (SELECT 1 FROM jsonb_array_elements(tags) AS t 
-                     WHERE t->>0 = 'd' AND (t->>1 = $3 OR ($3 = '' AND (t->>1 IS NULL OR t->>1 = ''))))"
-        )
-        .bind(event.pubkey.to_string())
-        .bind(kind_num as i32)
-        .bind(&d_tag)
-        .execute(&state.db)
-        .await;
-        
-        info!("Addressable event kind {} with d-tag '{}' - replaced previous version", kind_num, d_tag);
-    }
-
-    // 4. Save to DB
-    let tags_json = serde_json::to_value(&event.tags).unwrap_or(serde_json::Value::Null);
-    let created_at = chrono::DateTime::from_timestamp(event.created_at.as_secs() as i64, 0)
-        .unwrap_or_default()
-        .naive_utc()
-        .and_utc();
-
-    let insert_result = sqlx::query(
-        "INSERT INTO events (id, \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\", \"receivedAt\", \"expiresAt\") 
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
-         ON CONFLICT (\"eventId\") DO NOTHING"
-    )
-    .bind(nanoid::nanoid!())
-    .bind(event.id.to_string())
-    .bind(event.pubkey.to_string())
-    .bind(event.kind.as_u16() as i32)
-    .bind(&event.content)
-    .bind(tags_json)
-    .bind(event.sig.to_string())
-    .bind(created_at)
-    .bind(expires_at)
-    .execute(&state.db)
-    .await;
+    // 3. Save to DB. Replaceable (0, 3, 10000-19999) and addressable
+    // (30000-39999) kinds keep only the newest version (NIP-01).
+    let insert_result = replaceable::store_event(&state.db, &event, expires_at, nanoid::nanoid!()).await;
 
     match insert_result {
-        Ok(_) => {
+        Ok(StoreOutcome::HaveNewer) => {
+            debug!("Not storing superseded event {} (kind: {})", event.id, event.kind);
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "duplicate: have a newer event".to_string()).as_json().into())).await;
+        }
+        Ok(StoreOutcome::Duplicate) => {
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "duplicate: already have this event".to_string()).as_json().into())).await;
+        }
+        Ok(StoreOutcome::Stored { replaced }) => {
+            if replaced > 0 {
+                info!("Event {} (kind: {}) replaced {} older version(s)", event.id, event.kind, replaced);
+            }
             let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
             
             // Handle NIP-09: Event Deletion
