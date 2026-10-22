@@ -1239,7 +1239,7 @@ mod e2e_tests {
         assert_eq!(info["limitation"]["max_message_length"], cfg.max_message_length);
         assert_eq!(info["limitation"]["max_limit"], cfg.max_limit);
         assert_eq!(info["limitation"]["created_at_upper_limit"], 900);
-        assert_eq!(info["limitation"]["auth_required"], true);
+        assert_eq!(info["limitation"]["auth_required"], false);
         assert_eq!(info["limitation"]["restricted_writes"], true);
     }
 

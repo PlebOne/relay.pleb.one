@@ -100,10 +100,10 @@ pub fn relay_info(cfg: &RelayConfig) -> serde_json::Value {
             "max_subscriptions": cfg.max_subscriptions,
             "max_limit": cfg.max_limit,
             "default_limit": cfg.clamp_limit(None),
-            // Advertised as required per the operator's brief. Note the relay
-            // does not currently enforce NIP-42 AUTH for REQ or EVENT; writes
-            // are limited to whitelisted pubkeys (checked on the event's pubkey).
-            "auth_required": true,
+            // The relay does not enforce NIP-42 AUTH for REQ or EVENT, so it is
+            // not advertised as required; writes are limited to whitelisted
+            // pubkeys (checked on the event's pubkey).
+            "auth_required": false,
             "restricted_writes": true,
             "created_at_upper_limit": cfg.created_at_upper_limit,
         }
@@ -222,7 +222,7 @@ mod tests {
         assert_eq!(l["max_subscriptions"], 7);
         assert_eq!(l["max_limit"], 500);
         assert_eq!(l["created_at_upper_limit"], 30);
-        assert_eq!(l["auth_required"], true);
+        assert_eq!(l["auth_required"], false);
         assert_eq!(l["restricted_writes"], true);
     }
 
