@@ -312,6 +312,16 @@ export default function HomePage() {
               </Link>
               <span>{" | ⚡ Lightning enabled <"}</span>
             </div>
+            <p className="mt-2 text-xs text-gray-500">
+              <a
+                href="https://sentry.io"
+                target="_blank"
+                rel="noopener"
+                className="hover:text-green-400 transition"
+              >
+                Error monitoring by Sentry
+              </a>
+            </p>
           </div>
         </div>
       </footer>

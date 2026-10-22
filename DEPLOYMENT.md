@@ -328,3 +328,41 @@ Optional Redis auth: set `REDIS_PASSWORD` in `.env`. Redis then starts with
 same variable (it overrides any password in `REDIS_URL`). Leave it unset or
 empty to keep Redis without auth. Changing it requires recreating the
 containers: `docker compose up -d --force-recreate redis app relay`.
+
+## Sentry error monitoring
+
+The Next.js app reports errors (plus 10% of traces) to Sentry
+(org `nine-point-labs`, project `relay-pleb-one`). The Rust relay is not
+instrumented. No session replay, profiling, logs or feedback widget.
+Every event, transaction and breadcrumb goes through `src/lib/sentry-scrub.ts`
+before it leaves the process (cookies, auth headers, query strings, request
+bodies, user email/IP, email addresses, tokens/JWTs, `nsec1`/`ncryptsec1`
+keys and 64-char hex strings are removed or masked).
+
+1. In `.env` next to `docker-compose.yml`, set the DSN (Sentry project
+   settings, "Client Keys"). Leave it empty to keep Sentry disabled.
+
+   ```bash
+   SENTRY_DSN=https://<key>@<org>.ingest.us.sentry.io/<project>
+   SENTRY_ENVIRONMENT=production
+   ```
+
+   The one `SENTRY_DSN` feeds both the server (runtime env) and the browser
+   bundle (`NEXT_PUBLIC_SENTRY_DSN` build arg), so changing it needs a rebuild.
+
+2. Build with the git sha as the release, then start:
+
+   ```bash
+   SENTRY_RELEASE=$(git rev-parse --short HEAD) docker compose build app
+   SENTRY_RELEASE=$(git rev-parse --short HEAD) docker compose up -d app
+   ```
+
+   (Or put `SENTRY_RELEASE=<sha>` in `.env` for both steps.)
+
+3. Caddy: the CSP `connect-src` now allows `https://*.ingest.us.sentry.io`.
+   Reload Caddy after pulling: `docker compose restart caddy`.
+
+Source maps are not uploaded by default. They are generated and uploaded only
+when `SENTRY_AUTH_TOKEN` is present in the build environment (never commit it);
+without it the build skips source maps silently and stack traces in Sentry
+show minified browser frames.

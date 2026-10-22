@@ -40,6 +40,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Sentry (optional). One SENTRY_DSN in .env feeds browser and server.
+        NEXT_PUBLIC_SENTRY_DSN: ${SENTRY_DSN:-}
+        NEXT_PUBLIC_SENTRY_RELEASE: ${SENTRY_RELEASE:-}
+        SENTRY_RELEASE: ${SENTRY_RELEASE:-}
     container_name: relay-app
     environment:
       - NODE_ENV=production
@@ -56,6 +61,10 @@ services:
       - HOST_PROC_PATH=/host/proc
       - HOST_DISK_PATH=/host/pgdata
       - RELAY_STATS_URL=http://relay:3002/stats
+      # Sentry error monitoring (disabled when SENTRY_DSN is empty)
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-production}
+      - SENTRY_RELEASE=${SENTRY_RELEASE:-}
     volumes:
       # Read-only host metrics for the Resources tab. No Docker socket.
       - /proc:/host/proc:ro

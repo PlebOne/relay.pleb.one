@@ -23,6 +23,15 @@ COPY . .
 # Generate Prisma client
 RUN npx prisma generate
 
+# Sentry (optional). The browser DSN and release are inlined at build time;
+# empty values leave Sentry disabled. SENTRY_AUTH_TOKEN is never baked in.
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+ARG NEXT_PUBLIC_SENTRY_RELEASE=""
+ARG SENTRY_RELEASE=""
+ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN \
+    NEXT_PUBLIC_SENTRY_RELEASE=$NEXT_PUBLIC_SENTRY_RELEASE \
+    SENTRY_RELEASE=$SENTRY_RELEASE
+
 # Build the application
 ENV SKIP_ENV_VALIDATION=1
 RUN npm run build
@@ -33,6 +42,10 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Sentry release (git sha) for server-side events; SENTRY_DSN comes from compose at runtime.
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
 
 RUN groupadd --system --gid 1001 nodejs
 RUN useradd --system --uid 1001 --gid nodejs nextjs

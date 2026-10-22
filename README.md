@@ -14,7 +14,8 @@ A public Nostr relay with whitelist-based access built with the T3 stack (Next.j
 6. [NIP coverage](#nip-coverage)
 7. [Deployment](#deployment)
 8. [Contributing](#contributing)
-9. [License](#license)
+9. [Thanks](#thanks)
+10. [License](#license)
 
 ---
 
@@ -120,6 +121,7 @@ Configuration is entirely `.env`-driven. Key variables:
 - **Database**: `DATABASE_URL` (Used by both Prisma and Rust/SQLx)
 - **Auth**: `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `ADMIN_NPUB`
 - **Relay**: `RELAY_PORT`
+- **Error monitoring (optional)**: `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, `SENTRY_RELEASE` (see `DEPLOYMENT.md`, "Sentry error monitoring")
 
 
 ## NIP coverage
@@ -157,6 +159,10 @@ This starts:
 Contributions are welcome!
 - **Frontend**: TypeScript/Next.js in `src/`
 - **Backend**: Rust in `relay-rs/`
+
+## Thanks
+
+Error monitoring is provided by [Sentry](https://sentry.io) through the [Sentry for Good](https://sentry.io/for/good/) program. Thank you, Sentry.
 
 ## License
 
