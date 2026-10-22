@@ -299,6 +299,8 @@ export default function HomePage() {
               <a href="/contact" className="hover:text-green-400 transition">[Contact]</a>
               {" • "}
               <Link href="/report" className="hover:text-green-400 transition">[Report Abuse]</Link>
+              {" • "}
+              <a href="https://blog.pleb.one" className="hover:text-green-400 transition">[Blog]</a>
             </p>
             <div className="mt-4 text-xs text-gray-500">
               <span>{"> System uptime: 99.9% | "}</span>
