@@ -40,6 +40,9 @@ export function SiteHeader() {
             <Link href="/support" className="text-green-400 hover:text-green-300 transition font-mono">
               [Support]
             </Link>
+            <a href="https://blog.pleb.one" className="text-green-400 hover:text-green-300 transition font-mono">
+              [Blog]
+            </a>
             <GlowingButton asChild className="px-4 py-2 text-sm">
               <Link href="/login">
                 {'>> Login'}
@@ -81,6 +84,9 @@ export function SiteHeader() {
           <Link href="/support" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
             [Keep the Network Flowing]
           </Link>
+          <a href="https://blog.pleb.one" className="text-green-400 hover:text-green-300 transition font-mono py-2 block wrap-break-word" onClick={() => setIsOpen(false)}>
+            [Blog]
+          </a>
           <div className="pt-2">
             <GlowingButton asChild className="w-full justify-center">
               <Link href="/login" onClick={() => setIsOpen(false)}>
