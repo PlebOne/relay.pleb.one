@@ -868,8 +868,6 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
             if replaced > 0 {
                 info!("Event {} (kind: {}) replaced {} older version(s)", event.id, event.kind, replaced);
             }
-            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
-            
             // Handle NIP-09: Event Deletion
             if event.kind.as_u16() == 5 {
                 let pubkey = event.pubkey.to_string();
@@ -886,6 +884,8 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
                     }
                 }
             }
+            // OK only after the deletions, so a client that sees OK won't still get the deleted events.
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
 
             // Handle NIP-62: Request to Vanish
             if event.kind.as_u16() == 62 {
@@ -1607,6 +1607,26 @@ mod e2e_tests {
         assert_eq!(publish(&mut ws, &del).await, (true, String::new()));
         assert_eq!(count_rows(&db, &k, 1).await, 0);
         assert_eq!(count_rows(&db, &k, 5).await, 1);
+    }
+
+    #[tokio::test]
+    async fn db_nip09_deletes_are_done_before_ok() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        // Many targets make the window between OK and the last DELETE wide.
+        let t = now() - 1000;
+        let mut tags = Vec::new();
+        for i in 0..100 {
+            let note = ev(&k, 1, t + i, &format!("delete me {}", i), vec![]);
+            assert_eq!(publish(&mut ws, &note).await, (true, String::new()));
+            tags.push(Tag::parse(vec!["e".to_string(), note.id.to_hex()]).unwrap());
+        }
+        let del = ev(&k, 5, now(), "", tags);
+        assert_eq!(publish(&mut ws, &del).await, (true, String::new()));
+        assert_eq!(count_rows(&db, &k, 1).await, 0);
+        let author = k.public_key().to_hex();
+        assert!(req(&mut ws, "after", serde_json::json!({"authors": [author], "kinds": [1]})).await.is_empty());
     }
 
     #[tokio::test]
