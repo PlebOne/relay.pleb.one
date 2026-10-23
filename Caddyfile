@@ -23,6 +23,12 @@
         }
     }
 
+    # CORS preflight: answer OPTIONS directly (CORS headers come from the header block below)
+    @preflight method OPTIONS
+    handle @preflight {
+        respond 204
+    }
+
     # NIP-11 Relay Information Document (root path with specific Accept header)
     @nip11 {
         path /
@@ -52,6 +58,15 @@
         reverse_proxy app:3000
     }
     
+    # CORS for NIP-11 and other GET requests from browser clients.
+    # Deferred so these replace (not duplicate) any CORS headers set upstream.
+    header {
+        Access-Control-Allow-Origin "*"
+        Access-Control-Allow-Headers "*"
+        Access-Control-Allow-Methods "GET, HEAD, OPTIONS"
+        defer
+    }
+
     # Security headers
     header {
         # HSTS
