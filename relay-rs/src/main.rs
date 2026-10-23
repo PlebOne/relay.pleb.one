@@ -279,6 +279,17 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                         "NEG-CLOSE" => {
                                             handle_nip77_close(arr, &mut negentropy_sessions);
                                         }
+                                        // nostr's Filter parser lowercases ids, so a REQ with ids that
+                                        // are not lowercase hex goes to the raw path, where they match nothing.
+                                        "REQ" if arr.len() >= 3 && arr[1].is_string() && has_noncanonical_ids(&arr[2..]) => {
+                                            handle_prefix_search_req(
+                                                SubscriptionId::new(arr[1].as_str().unwrap()),
+                                                arr[2..].iter().filter_map(|f| f.as_object().cloned()).collect(),
+                                                &state,
+                                                &mut subscriptions,
+                                                &tx_internal
+                                            ).await;
+                                        }
                                         _ => {
                                             // Standard Nostr
                                             match ClientMessage::from_json(text.as_str()) {
@@ -561,66 +572,72 @@ async fn handle_nip77_open(
     sender: &tokio::sync::mpsc::Sender<Message>,
     sessions: &mut HashMap<String, NegSession>,
 ) {
+    let Some(sub_id) = arr.get(1).and_then(|v| v.as_str()) else { return };
+    // A NEG-OPEN replaces any open session with the same id, also when it fails.
+    sessions.remove(sub_id);
+    match nip77_open(arr, state).await {
+        Ok((neg, response)) => {
+            sessions.insert(sub_id.to_string(), neg);
+            let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
+        }
+        Err(reason) => send_neg_err(sender, sub_id, reason).await,
+    }
+}
+
+/// Build the session for a NEG-OPEN and answer its initial message, or the NEG-ERR reason.
+async fn nip77_open(arr: &[serde_json::Value], state: &Arc<AppState>) -> Result<(NegSession, Vec<u8>), &'static str> {
     // Current NIP-77: ["NEG-OPEN", sub_id, filter, initial_msg].
     // Older drafts put an id size before the message: ["NEG-OPEN", sub_id, filter, id_size, initial_msg].
     let initial_msg_hex = match arr.len() {
-        4 => arr[3].as_str().unwrap_or(""),
-        n if n >= 5 => arr[4].as_str().unwrap_or(""),
-        _ => return,
+        4 => arr[3].as_str(),
+        n if n >= 5 => arr[4].as_str(),
+        _ => None,
     };
-    let sub_id = arr[1].as_str().unwrap_or("");
-    let filter_val = &arr[2];
+    let initial_msg = initial_msg_hex
+        .and_then(|h| hex::decode(h).ok())
+        .ok_or("invalid: initial message must be hex")?;
 
-    if let Ok(filter) = serde_json::from_value::<Filter>(filter_val.clone()) {
-        // Ids of every stored event matching the filter. NIP-77 syncs the whole
-        // matching set, so the filter's `limit` is not applied; instead the set is
-        // capped and an oversized query gets NEG-ERR.
-        let filter_map = match serde_json::to_value(&filter) {
-            Ok(serde_json::Value::Object(m)) => m,
-            _ => return,
-        };
-        let max_records = state.config.max_negentropy_records;
-        let mut query = build_filtered_query(&[filter_map], "\"eventId\", \"createdAt\"", |_| None);
-        query.push(" LIMIT ").push_bind(max_records as i64 + 1);
-        let rows = query.build().fetch_all(&state.db).await;
+    let filter = serde_json::from_value::<Filter>(arr[2].clone()).map_err(|_| "invalid: bad filter")?;
+    // Ids of every stored event matching the filter. NIP-77 syncs the whole
+    // matching set, so the filter's `limit` is not applied; instead the set is
+    // capped and an oversized query gets NEG-ERR.
+    let mut filter_map = match serde_json::to_value(&filter) {
+        Ok(serde_json::Value::Object(m)) => m,
+        _ => return Err("invalid: bad filter"),
+    };
+    // Parsing lowercases ids; match the client's ids as sent (see has_noncanonical_ids).
+    if let Some(ids) = arr[2].get("ids") {
+        filter_map.insert("ids".to_string(), ids.clone());
+    }
+    let max_records = state.config.max_negentropy_records;
+    let mut query = build_filtered_query(&[filter_map], "\"eventId\", \"createdAt\"", |_| None);
+    query.push(" LIMIT ").push_bind(max_records as i64 + 1);
+    let rows = query.build().fetch_all(&state.db).await.map_err(|e| {
+        error!("NEG-OPEN query failed: {}", e);
+        "error: query failed"
+    })?;
+    if rows.len() > max_records {
+        return Err("blocked: too many records");
+    }
 
-        if let Ok(rows) = &rows {
-            if rows.len() > max_records {
-                sessions.remove(sub_id);
-                let _ = sender.send(Message::Text(serde_json::json!(["NEG-ERR", sub_id, "blocked: too many records"]).to_string().into())).await;
-                return;
-            }
-        }
-
-        if let Ok(rows) = rows {
-            // Items are ordered by (created_at, id), so real timestamps are
-            // needed for the ranges to line up with the client's.
-            let mut storage = NegentropyStorageVector::with_capacity(rows.len());
-            for row in rows {
-                let eid: String = row.get("eventId");
-                let created_at: i64 = row.try_get::<chrono::NaiveDateTime, _>("createdAt").map(|t| t.and_utc().timestamp()).unwrap_or(0);
-                if let Ok(bytes) = hex::decode(&eid) {
-                    if let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) {
-                        let _ = storage.insert(created_at.max(0) as u64, Id::from_byte_array(id));
-                    }
-                }
-            }
-            if storage.seal().is_err() {
-                return;
-            }
-
-            // Create Negentropy session (100 KB frame limit)
-            if let Ok(mut neg) = Negentropy::owned(storage, 100_000) {
-                // Process initial message
-                if let Ok(query) = hex::decode(initial_msg_hex) {
-                    if let Ok(response) = neg.reconcile(&query) {
-                        sessions.insert(sub_id.to_string(), neg);
-                        let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
-                    }
-                }
+    // Items are ordered by (created_at, id), so real timestamps are
+    // needed for the ranges to line up with the client's.
+    let mut storage = NegentropyStorageVector::with_capacity(rows.len());
+    for row in rows {
+        let eid: String = row.get("eventId");
+        let created_at: i64 = row.try_get::<chrono::NaiveDateTime, _>("createdAt").map(|t| t.and_utc().timestamp()).unwrap_or(0);
+        if let Ok(bytes) = hex::decode(&eid) {
+            if let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                let _ = storage.insert(created_at.max(0) as u64, Id::from_byte_array(id));
             }
         }
     }
+    storage.seal().map_err(|_| "error: could not build negentropy storage")?;
+
+    // Create Negentropy session (100 KB frame limit)
+    let mut neg = Negentropy::owned(storage, 100_000).map_err(|_| "error: could not start negentropy session")?;
+    let response = neg.reconcile(&initial_msg).map_err(|_| "invalid: bad negentropy message")?;
+    Ok((neg, response))
 }
 
 async fn handle_nip77_msg(
@@ -629,18 +646,35 @@ async fn handle_nip77_msg(
     sender: &tokio::sync::mpsc::Sender<Message>,
     sessions: &mut HashMap<String, NegSession>,
 ) {
-    if arr.len() < 3 { return; }
-    let sub_id = arr[1].as_str().unwrap_or("");
-    let msg_hex = arr[2].as_str().unwrap_or("");
-
-    if let Some(neg) = sessions.get_mut(sub_id) {
-        if let Ok(query) = hex::decode(msg_hex) {
-            if let Ok(response) = neg.reconcile(&query) {
-                let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
-            }
+    let Some(sub_id) = arr.get(1).and_then(|v| v.as_str()) else { return };
+    let Some(neg) = sessions.get_mut(sub_id) else {
+        send_neg_err(sender, sub_id, "closed: unknown subscription").await;
+        return;
+    };
+    let query = match arr.get(2).and_then(|v| v.as_str()).map(hex::decode) {
+        Some(Ok(query)) => query,
+        _ => {
+            sessions.remove(sub_id);
+            send_neg_err(sender, sub_id, "invalid: message must be hex").await;
+            return;
+        }
+    };
+    match neg.reconcile(&query) {
+        Ok(response) => {
+            let _ = sender.send(Message::Text(serde_json::json!(["NEG-MSG", sub_id, hex::encode(response)]).to_string().into())).await;
+        }
+        Err(_) => {
+            sessions.remove(sub_id);
+            send_neg_err(sender, sub_id, "invalid: bad negentropy message").await;
         }
     }
 }
+
+/// NIP-77: an error ends the session; the client must NEG-OPEN again.
+async fn send_neg_err(sender: &tokio::sync::mpsc::Sender<Message>, sub_id: &str, reason: &str) {
+    let _ = sender.send(Message::Text(serde_json::json!(["NEG-ERR", sub_id, reason]).to_string().into())).await;
+}
+
 fn handle_nip77_close(
     arr: &Vec<serde_json::Value>,
     sessions: &mut HashMap<String, NegSession>,
@@ -970,6 +1004,13 @@ async fn handle_req(
 }
 
 const EVENT_COLUMNS: &str = "\"eventId\", pubkey, kind, content, tags, sig, \"createdAt\"";
+
+/// True if any filter lists an id that is not 64 lowercase hex chars (NIP-01).
+fn has_noncanonical_ids(filters: &[serde_json::Value]) -> bool {
+    filters.iter().filter_map(|f| f.get("ids")?.as_array()).flatten().any(|id| {
+        !id.as_str().is_some_and(|id| id.len() == 64 && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+    })
+}
 
 /// String values of a non-empty JSON array (non-strings dropped); None if absent or empty.
 fn json_strings(val: Option<&serde_json::Value>) -> Option<Vec<String>> {
@@ -1327,16 +1368,20 @@ mod e2e_tests {
 
     // ---------- no DB ----------
 
-    #[tokio::test]
-    async fn nip11_document_reflects_config() {
-        let cfg = test_config(&[("MAX_SUBSCRIPTIONS_PER_CONNECTION", "7")]);
-        let (addr, _) = start(cfg.clone(), false).await.unwrap();
+    async fn nip11(addr: SocketAddr) -> serde_json::Value {
         let mut s = tokio::net::TcpStream::connect(addr).await.unwrap();
         s.write_all(b"GET / HTTP/1.1\r\nHost: relay\r\nAccept: application/nostr+json\r\nConnection: close\r\n\r\n").await.unwrap();
         let mut resp = String::new();
         s.read_to_string(&mut resp).await.unwrap();
         let body = &resp[resp.find("\r\n\r\n").unwrap() + 4..];
-        let info: serde_json::Value = serde_json::from_str(body).unwrap();
+        serde_json::from_str(body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn nip11_document_reflects_config() {
+        let cfg = test_config(&[("MAX_SUBSCRIPTIONS_PER_CONNECTION", "7")]);
+        let (addr, _) = start(cfg.clone(), false).await.unwrap();
+        let info = nip11(addr).await;
         assert_eq!(info["pubkey"], "8dc8688200b447ec2e4018ea5e42dc5d480940cb3f19ca8f361d28179dc4ba5e");
         assert_eq!(info["contact"], "https://relay.pleb.one");
         assert_eq!(info["icon"], "https://relay.pleb.one/android-chrome-512x512.png");
@@ -1346,6 +1391,42 @@ mod e2e_tests {
         assert_eq!(info["limitation"]["created_at_upper_limit"], 900);
         assert_eq!(info["limitation"]["auth_required"], false);
         assert_eq!(info["limitation"]["restricted_writes"], true);
+    }
+
+    #[tokio::test]
+    async fn nip11_max_message_length_is_the_enforced_cap() {
+        let cfg = test_config(&[("MAX_EVENT_SIZE", "2000")]);
+        let (addr, _) = start(cfg.clone(), false).await.unwrap();
+        let info = nip11(addr).await;
+        let cap = info["limitation"]["max_message_length"].as_u64().unwrap() as usize;
+        assert_eq!(cap, cfg.max_message_length);
+        // `["CLOSE","x..."]` of exactly `len` bytes
+        let close = |len: usize| format!("[\"CLOSE\",\"{}\"]", "x".repeat(len - 12));
+        let (mut ws, _) = connect(addr).await;
+        send_raw(&mut ws, &close(cap)).await;
+        assert_eq!(recv(&mut ws).await.unwrap()[0], "CLOSED");
+        send_raw(&mut ws, &close(cap + 1)).await;
+        assert!(recv(&mut ws).await.is_none(), "one byte over the advertised cap should drop the connection");
+    }
+
+    // These fail before the query, so no DB is needed.
+    #[tokio::test]
+    async fn nip77_neg_err_for_unknown_sub_and_bad_open() {
+        let (addr, _) = start(RelayConfig::default(), false).await.unwrap();
+        let (mut ws, _) = connect(addr).await;
+        let cases = [
+            (serde_json::json!(["NEG-MSG", "nope", "61"]), "closed: unknown subscription"),
+            (serde_json::json!(["NEG-OPEN", "s1", {}, "not hex"]), "invalid: initial message must be hex"),
+            (serde_json::json!(["NEG-OPEN", "s2", {}, 97]), "invalid: initial message must be hex"),
+            (serde_json::json!(["NEG-OPEN", "s3", {}]), "invalid: initial message must be hex"),
+            (serde_json::json!(["NEG-OPEN", "s4", {"kinds": "x"}, "61"]), "invalid: bad filter"),
+        ];
+        for (msg, reason) in cases {
+            let sub = msg[1].as_str().unwrap().to_string();
+            send(&mut ws, msg).await;
+            let m = recv_until(&mut ws, |m| m[1] == sub.as_str()).await;
+            assert_eq!(m, serde_json::json!(["NEG-ERR", sub, reason]));
+        }
     }
 
     #[tokio::test]
@@ -1674,6 +1755,54 @@ mod e2e_tests {
         // At the cap is fine
         let two = neg_sync(&mut ws, "ok", serde_json::json!({"authors": [k.public_key().to_hex()], "until": t + 1})).await;
         assert_eq!(two.map(|ids| ids.len()), Ok(2));
+    }
+
+    #[tokio::test]
+    async fn db_nip77_neg_err_for_bad_messages() {
+        let Some((addr, _db)) = start(RelayConfig::default(), true).await else { return };
+        let (mut ws, _) = connect(addr).await;
+        // Hex, but not a negentropy message (0xff is not a protocol version)
+        send(&mut ws, serde_json::json!(["NEG-OPEN", "bad", {}, "ff"])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "bad").await;
+        assert_eq!(m, serde_json::json!(["NEG-ERR", "bad", "invalid: bad negentropy message"]));
+        // An unsupported version is not an error: the relay answers with its own version
+        send(&mut ws, serde_json::json!(["NEG-OPEN", "v2", {}, "62"])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "v2").await;
+        assert_eq!(m, serde_json::json!(["NEG-MSG", "v2", "61"]));
+
+        // A bad NEG-MSG ends the session
+        let mut storage = NegentropyStorageVector::new();
+        storage.seal().unwrap();
+        let init = Negentropy::owned(storage, 0).unwrap().initiate().unwrap();
+        send(&mut ws, serde_json::json!(["NEG-OPEN", "s", {}, hex::encode(init)])).await;
+        assert_eq!(recv_until(&mut ws, |m| m[1] == "s").await[0], "NEG-MSG");
+        send(&mut ws, serde_json::json!(["NEG-MSG", "s", "zz"])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "s").await;
+        assert_eq!(m, serde_json::json!(["NEG-ERR", "s", "invalid: message must be hex"]));
+        send(&mut ws, serde_json::json!(["NEG-MSG", "s", "61"])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "s").await;
+        assert_eq!(m, serde_json::json!(["NEG-ERR", "s", "closed: unknown subscription"]));
+    }
+
+    #[tokio::test]
+    async fn db_uppercase_ids_match_nothing() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let (a, b) = (ev(&k, 1, now(), "a", vec![]), ev(&k, 1, now() - 1, "b", vec![]));
+        for e in [&a, &b] {
+            assert_eq!(publish(&mut ws, e).await, (true, String::new()));
+        }
+        let (a_id, b_id) = (a.id.to_hex(), b.id.to_hex());
+        let upper = a_id.to_uppercase();
+
+        assert!(req(&mut ws, "up", serde_json::json!({"ids": [upper]})).await.is_empty());
+        // Mixed: the lowercase id still matches
+        assert_eq!(ids(&req(&mut ws, "mix", serde_json::json!({"ids": [upper, b_id]})).await), vec![b_id.clone()]);
+        assert_eq!(ids(&req(&mut ws, "low", serde_json::json!({"ids": [a_id]})).await), vec![a_id.clone()]);
+
+        assert_eq!(neg_sync(&mut ws, "negup", serde_json::json!({"ids": [upper]})).await, Ok(vec![]));
+        assert_eq!(neg_sync(&mut ws, "neglow", serde_json::json!({"ids": [a_id]})).await, Ok(vec![a_id.clone()]));
     }
 
     #[tokio::test]
