@@ -309,11 +309,15 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                                                     if !handled {
                                                         // Check if this is a prefix search (common pattern from Amethyst)
                                                         if msg_type == "REQ" && arr.len() >= 3 {
-                                                            if let (Some(sub_id), Some(filter_obj)) = (arr[1].as_str(), arr[2].as_object()) {
+                                                            let filter_objs: Vec<serde_json::Map<String, serde_json::Value>> = arr[2..]
+                                                                .iter()
+                                                                .filter_map(|f| f.as_object().cloned())
+                                                                .collect();
+                                                            if let (Some(sub_id), false) = (arr[1].as_str(), filter_objs.is_empty()) {
                                                                 // Handle prefix search manually
                                                                 handle_prefix_search_req(
                                                                     SubscriptionId::new(sub_id),
-                                                                    filter_obj.clone(),
+                                                                    filter_objs,
                                                                     &state,
                                                                     &mut subscriptions,
                                                                     &tx_internal
@@ -547,12 +551,26 @@ async fn handle_nip77_open(
     let sub_id = arr[1].as_str().unwrap_or("");
     let filter_val = &arr[2];
 
-    if let Ok(_filter) = serde_json::from_value::<Filter>(filter_val.clone()) {
-        // 1. Fetch ALL event IDs matching filter (Heavy operation!)
-        // In a real impl, this needs optimized DB queries or a separate index
-        let rows = sqlx::query("SELECT \"eventId\", EXTRACT(EPOCH FROM \"createdAt\")::bigint AS created_at FROM events") // Simplified: Fetch all and filter in memory for now due to complex filter mapping
-            .fetch_all(&state.db)
-            .await;
+    if let Ok(filter) = serde_json::from_value::<Filter>(filter_val.clone()) {
+        // Ids of every stored event matching the filter. NIP-77 syncs the whole
+        // matching set, so the filter's `limit` is not applied; instead the set is
+        // capped and an oversized query gets NEG-ERR.
+        let filter_map = match serde_json::to_value(&filter) {
+            Ok(serde_json::Value::Object(m)) => m,
+            _ => return,
+        };
+        let max_records = state.config.max_negentropy_records;
+        let mut query = build_filtered_query(&[filter_map], "\"eventId\", \"createdAt\"", |_| None);
+        query.push(" LIMIT ").push_bind(max_records as i64 + 1);
+        let rows = query.build().fetch_all(&state.db).await;
+
+        if let Ok(rows) = &rows {
+            if rows.len() > max_records {
+                sessions.remove(sub_id);
+                let _ = sender.send(Message::Text(serde_json::json!(["NEG-ERR", sub_id, "blocked: too many records"]).to_string().into())).await;
+                return;
+            }
+        }
 
         if let Ok(rows) = rows {
             // Items are ordered by (created_at, id), so real timestamps are
@@ -560,8 +578,7 @@ async fn handle_nip77_open(
             let mut storage = NegentropyStorageVector::with_capacity(rows.len());
             for row in rows {
                 let eid: String = row.get("eventId");
-                let created_at: i64 = row.try_get("created_at").unwrap_or(0);
-                // TODO: Map Filter to SQL; for now every stored event is offered.
+                let created_at: i64 = row.try_get::<chrono::NaiveDateTime, _>("createdAt").map(|t| t.and_utc().timestamp()).unwrap_or(0);
                 if let Ok(bytes) = hex::decode(&eid) {
                     if let Ok(id) = <[u8; 32]>::try_from(bytes.as_slice()) {
                         let _ = storage.insert(created_at.max(0) as u64, Id::from_byte_array(id));
@@ -863,48 +880,19 @@ async fn handle_req(
     }
     subscriptions.insert(sub_id.to_string(), filters.clone());
 
-    // Build SQL query based on filters
-    let mut sql = String::from("SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())");
-    let mut params: Vec<String> = Vec::new();
-    let mut param_count = 1;
-    
-    // Take the first filter (most clients send one filter per REQ)
-    if let Some(filter) = filters.first() {
-        // Filter by kinds
-        if let Some(kinds) = &filter.kinds {
-            let kind_list: Vec<String> = kinds.iter().map(|k| k.as_u16().to_string()).collect();
-            if !kind_list.is_empty() {
-                sql.push_str(&format!(" AND kind IN ({})", kind_list.join(",")));
-            }
-        }
-        
-        // Filter by authors
-        if let Some(authors) = &filter.authors {
-            if !authors.is_empty() {
-                let author_list: Vec<String> = authors.iter().map(|a| format!("'{}'", a)).collect();
-                sql.push_str(&format!(" AND pubkey IN ({})", author_list.join(",")));
-            }
-        }
-        
-        // Filter by since
-        if let Some(since) = filter.since {
-            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") >= {}", since.as_secs()));
-        }
-        
-        // Filter by until
-        if let Some(until) = filter.until {
-            sql.push_str(&format!(" AND EXTRACT(EPOCH FROM \"createdAt\") <= {}", until.as_secs()));
-        }
-    }
-    
-    // Order and limit
-    sql.push_str(" ORDER BY \"createdAt\" DESC");
-    let limit = state.config.clamp_limit(filters.first().and_then(|f| f.limit));
-    sql.push_str(&format!(" LIMIT {}", limit));
-    
-    debug!("Executing query: {}", sql);
-    
-    let rows = sqlx::query(&sql)
+    // Push every filter (ids, authors, kinds, since/until, #tags, limit) into SQL
+    let filter_maps: Vec<serde_json::Map<String, serde_json::Value>> = filters
+        .iter()
+        .filter_map(|f| match serde_json::to_value(f) {
+            Ok(serde_json::Value::Object(m)) => Some(m),
+            _ => None,
+        })
+        .collect();
+    let mut query = build_events_query(&filter_maps, &state.config);
+
+    debug!("Executing query: {}", query.sql());
+
+    let rows = query.build()
     .fetch_all(&state.db)
     .await;
 
@@ -961,79 +949,114 @@ async fn handle_req(
     }
 }
 
+const EVENT_COLUMNS: &str = "\"eventId\", pubkey, kind, content, tags, sig, \"createdAt\"";
+
+/// String values of a non-empty JSON array (non-strings dropped); None if absent or empty.
+fn json_strings(val: Option<&serde_json::Value>) -> Option<Vec<String>> {
+    let arr = val?.as_array()?;
+    if arr.is_empty() {
+        return None;
+    }
+    Some(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+}
+
+/// Build one query for all filters of a REQ. Each filter becomes its own subquery
+/// (with its own ORDER BY/LIMIT) and the subqueries are UNIONed, so the result is
+/// filter1 OR filter2 OR ... All values are bound parameters.
+fn build_events_query(filters: &[serde_json::Map<String, serde_json::Value>], config: &RelayConfig) -> sqlx::QueryBuilder<'static, Postgres> {
+    build_filtered_query(filters, EVENT_COLUMNS, |filter| {
+        Some(config.clamp_limit(filter.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize)) as i64)
+    })
+}
+
+/// Shared by REQ and NEG-OPEN: select `columns` from events matching any of
+/// `filters`. `limit` gives each filter's LIMIT, or None for no limit.
+fn build_filtered_query(
+    filters: &[serde_json::Map<String, serde_json::Value>],
+    columns: &str,
+    limit: impl Fn(&serde_json::Map<String, serde_json::Value>) -> Option<i64>,
+) -> sqlx::QueryBuilder<'static, Postgres> {
+    let empty = serde_json::Map::new();
+    let filters: Vec<&serde_json::Map<String, serde_json::Value>> = if filters.is_empty() {
+        vec![&empty]
+    } else {
+        filters.iter().collect()
+    };
+
+    let mut qb = sqlx::QueryBuilder::new(format!("SELECT {} FROM (", columns));
+    for (i, filter) in filters.iter().enumerate() {
+        if i > 0 {
+            qb.push(" UNION ");
+        }
+        qb.push(format!("(SELECT {} FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())", columns));
+
+        // ids: exact match only, so a short or invalid id matches nothing
+        if let Some(ids) = json_strings(filter.get("ids")) {
+            qb.push(" AND \"eventId\" = ANY(").push_bind(ids).push(")");
+        }
+
+        // authors: lowercase hex only. Full pubkeys match exactly, shorter ones as
+        // prefixes (hex only, so no LIKE wildcards). If none are valid, nothing matches.
+        if let Some(authors) = json_strings(filter.get("authors")) {
+            let (exact, prefixes): (Vec<String>, Vec<String>) = authors
+                .into_iter()
+                .filter(|a| !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                .partition(|a| a.len() == 64);
+            let patterns: Vec<String> = prefixes.into_iter().map(|a| format!("{}%", a)).collect();
+            qb.push(" AND (pubkey = ANY(").push_bind(exact).push(") OR pubkey LIKE ANY(").push_bind(patterns).push("))");
+        }
+
+        if let Some(kinds) = filter.get("kinds").and_then(|v| v.as_array()) {
+            if !kinds.is_empty() {
+                let kinds: Vec<i32> = kinds.iter().filter_map(|k| k.as_i64()).filter_map(|k| i32::try_from(k).ok()).collect();
+                qb.push(" AND kind = ANY(").push_bind(kinds).push(")");
+            }
+        }
+
+        // Compare "createdAt" directly (stored as UTC) so its index can be used
+        if let Some(since) = filter.get("since").and_then(|v| v.as_f64()) {
+            qb.push(" AND \"createdAt\" >= (to_timestamp(").push_bind(since).push(") AT TIME ZONE 'UTC')");
+        }
+        if let Some(until) = filter.get("until").and_then(|v| v.as_f64()) {
+            qb.push(" AND \"createdAt\" <= (to_timestamp(").push_bind(until).push(") AT TIME ZONE 'UTC')");
+        }
+
+        // Single-letter tag filters (#e, #p, #a, #d, ...)
+        for (key, val) in filter.iter() {
+            let mut chars = key.chars();
+            let letter = match (chars.next(), chars.next(), chars.next()) {
+                (Some('#'), Some(c), None) if c.is_ascii_alphabetic() => c,
+                _ => continue,
+            };
+            if let Some(values) = json_strings(Some(val)) {
+                qb.push(" AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) AS t WHERE t->>0 = ")
+                    .push_bind(letter.to_string())
+                    .push(" AND t->>1 = ANY(")
+                    .push_bind(values)
+                    .push("))");
+            }
+        }
+
+        if let Some(limit) = limit(filter) {
+            qb.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit);
+        }
+        qb.push(")");
+    }
+    qb.push(") AS matched ORDER BY \"createdAt\" DESC");
+    qb
+}
+
 // Handle REQ with prefix searches (short author pubkeys)
 async fn handle_prefix_search_req(
     sub_id: SubscriptionId,
-    filter: serde_json::Map<String, serde_json::Value>,
+    filters: Vec<serde_json::Map<String, serde_json::Value>>,
     state: &Arc<AppState>,
     subscriptions: &mut HashMap<String, Vec<Filter>>,
     sender: &tokio::sync::mpsc::Sender<Message>,
 ) {
     info!("Received REQ with potential prefix search, sub_id: {}", sub_id);
     
-    // Extract filter components
-    let kinds: Vec<i32> = filter.get("kinds")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_i64().map(|n| n as i32)).collect())
-        .unwrap_or_default();
-    
-    let authors: Vec<String> = filter.get("authors")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    
-    let since = filter.get("since").and_then(|v| v.as_i64());
-    let until = filter.get("until").and_then(|v| v.as_i64());
-    let limit = state.config.clamp_limit(filter.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize)) as i64;
-    
-    // Authors must be lowercase hex (full pubkey or prefix). Anything else is
-    // rejected rather than passed to SQL; values are always bound as parameters.
-    let valid_authors: Vec<&String> = authors
-        .iter()
-        .filter(|a| !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
-        .collect();
-    if !authors.is_empty() && valid_authors.is_empty() {
-        let _ = sender.send(Message::Text(RelayMessage::eose(sub_id).as_json().into())).await;
-        return;
-    }
-
-    // Build SQL query with prefix support
-    let mut query = sqlx::QueryBuilder::<Postgres>::new(
-        "SELECT \"eventId\", pubkey, kind, content, tags, sig, \"createdAt\" FROM events WHERE (\"expiresAt\" IS NULL OR \"expiresAt\" > NOW())"
-    );
-
-    // Add kinds filter
-    if !kinds.is_empty() {
-        query.push(" AND kind = ANY(").push_bind(kinds).push(")");
-    }
-
-    // Add authors filter with prefix support
-    if !valid_authors.is_empty() {
-        query.push(" AND (");
-        for (i, author) in valid_authors.iter().enumerate() {
-            if i > 0 {
-                query.push(" OR ");
-            }
-            if author.len() == 64 {
-                // Full pubkey - exact match
-                query.push("pubkey = ").push_bind(author.to_string());
-            } else {
-                // Prefix - use LIKE (hex only, so no wildcards in the value)
-                query.push("pubkey LIKE ").push_bind(format!("{}%", author));
-            }
-        }
-        query.push(")");
-    }
-
-    // Add time filters
-    if let Some(since_ts) = since {
-        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") >= ").push_bind(since_ts as f64);
-    }
-    if let Some(until_ts) = until {
-        query.push(" AND EXTRACT(EPOCH FROM \"createdAt\") <= ").push_bind(until_ts as f64);
-    }
-
-    query.push(" ORDER BY \"createdAt\" DESC LIMIT ").push_bind(limit);
+    let mut query = build_events_query(&filters, &state.config);
 
     debug!("Prefix search query: {}", query.sql());
 
@@ -1409,5 +1432,152 @@ mod e2e_tests {
         send(&mut ws, serde_json::json!(["REQ", "s3", f])).await;
         let m = recv_until(&mut ws, |m| m[1] == "s3").await;
         assert_eq!((m[0].as_str(), m[2].as_str()), (Some("CLOSED"), Some("error: too many subscriptions")));
+    }
+
+    /// Publish more than the default limit of old events, oldest first. Event 1
+    /// carries an `e` tag pointing at the returned target id.
+    async fn seed_old_events(ws: &mut Ws, k: &Keys) -> (Vec<Event>, String) {
+        let target = Keys::generate().public_key().to_hex(); // any unique 64-char hex
+        let base = now() - 100_000;
+        let mut events = Vec::new();
+        for i in 0..(config::DEFAULT_LIMIT as u64 + 50) {
+            let tags = if i == 1 { vec![Tag::parse(vec!["e".to_string(), target.clone()]).unwrap()] } else { vec![] };
+            let e = ev(k, 1, base + i, &format!("old note {}", i), tags);
+            assert_eq!(publish(ws, &e).await, (true, String::new()));
+            events.push(e);
+        }
+        (events, target)
+    }
+
+    fn ids(events: &[serde_json::Value]) -> Vec<String> {
+        events.iter().map(|e| e["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[tokio::test]
+    async fn db_req_by_id_finds_event_older_than_default_limit() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let (events, _) = seed_old_events(&mut ws, &k).await;
+        let got = req(&mut ws, "byid", serde_json::json!({"ids": [events[0].id.to_hex()]})).await;
+        assert_eq!(ids(&got), vec![events[0].id.to_hex()]);
+    }
+
+    #[tokio::test]
+    async fn db_req_by_e_tag_finds_old_event() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let (events, target) = seed_old_events(&mut ws, &k).await;
+        let got = req(&mut ws, "bytag", serde_json::json!({"#e": [target]})).await;
+        assert_eq!(ids(&got), vec![events[1].id.to_hex()]);
+    }
+
+    #[tokio::test]
+    async fn db_req_uses_all_filters() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let (events, _) = seed_old_events(&mut ws, &k).await;
+        send(&mut ws, serde_json::json!(["REQ", "multi", {"ids": [events[0].id.to_hex()]}, {"ids": [events[2].id.to_hex()]}])).await;
+        let mut got = Vec::new();
+        loop {
+            let m = recv(&mut ws).await.expect("EOSE");
+            if m[0] == "EOSE" { break; }
+            if m[0] == "EVENT" { got.push(m[2].clone()); }
+        }
+        // Newest first
+        assert_eq!(ids(&got), vec![events[2].id.to_hex(), events[0].id.to_hex()]);
+    }
+
+    /// Run a NIP-77 sync as the client, starting from an empty set.
+    /// Returns the ids the relay has for `filter`, or the NEG-ERR reason.
+    async fn neg_sync(ws: &mut Ws, sub: &str, filter: serde_json::Value) -> Result<Vec<String>, String> {
+        let mut storage = NegentropyStorageVector::new();
+        storage.seal().unwrap();
+        let mut client = Negentropy::owned(storage, 0).unwrap();
+        let init = client.initiate().unwrap();
+        send(ws, serde_json::json!(["NEG-OPEN", sub, filter, hex::encode(init)])).await;
+        let mut need = Vec::new();
+        loop {
+            let m = recv_until(ws, |m| (m[0] == "NEG-MSG" || m[0] == "NEG-ERR") && m[1] == sub).await;
+            if m[0] == "NEG-ERR" {
+                return Err(m[2].as_str().unwrap().to_string());
+            }
+            let msg = hex::decode(m[2].as_str().unwrap()).unwrap();
+            let (mut have_ids, mut need_ids) = (Vec::new(), Vec::new());
+            let next = client.reconcile_with_ids(&msg, &mut have_ids, &mut need_ids).unwrap();
+            need.extend(need_ids.iter().map(|id| hex::encode(id.as_bytes())));
+            match next {
+                Some(next) => send(ws, serde_json::json!(["NEG-MSG", sub, hex::encode(next)])).await,
+                None => break,
+            }
+        }
+        send(ws, serde_json::json!(["NEG-CLOSE", sub])).await;
+        need.sort();
+        Ok(need)
+    }
+
+    #[tokio::test]
+    async fn db_neg_open_only_offers_matching_events() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let (alice, bob) = (whitelisted(&db).await, whitelisted(&db).await);
+        let (mut ws, _) = connect(addr).await;
+        let t = now() - 1000;
+        let mut alice_notes = Vec::new();
+        for i in 0..3 {
+            let e = ev(&alice, 1, t + i, &format!("alice {}", i), vec![]);
+            assert_eq!(publish(&mut ws, &e).await, (true, String::new()));
+            alice_notes.push(e.id.to_hex());
+        }
+        let alice_profile = ev(&alice, 0, t, "{}", vec![]);
+        let bob_note = ev(&bob, 1, t, "bob", vec![]);
+        for e in [&alice_profile, &bob_note] {
+            assert_eq!(publish(&mut ws, e).await, (true, String::new()));
+        }
+        alice_notes.sort();
+
+        // authors + kinds: only alice's kind 1 notes, not her profile, not bob's note
+        let got = neg_sync(&mut ws, "neg1", serde_json::json!({"authors": [alice.public_key().to_hex()], "kinds": [1]})).await;
+        assert_eq!(got, Ok(alice_notes.clone()));
+
+        // `limit` does not truncate the sync set
+        let got = neg_sync(&mut ws, "neg2", serde_json::json!({"authors": [alice.public_key().to_hex()], "kinds": [1], "limit": 1})).await;
+        assert_eq!(got, Ok(alice_notes));
+
+        // ids
+        let got = neg_sync(&mut ws, "neg3", serde_json::json!({"ids": [bob_note.id.to_hex()]})).await;
+        assert_eq!(got, Ok(vec![bob_note.id.to_hex()]));
+    }
+
+    #[tokio::test]
+    async fn db_neg_open_too_many_records() {
+        let cfg = test_config(&[("NEGENTROPY_MAX_RECORDS", "2")]);
+        let Some((addr, db)) = start(cfg, true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let t = now() - 1000;
+        for i in 0..3 {
+            assert_eq!(publish(&mut ws, &ev(&k, 1, t + i, &format!("n {}", i), vec![])).await, (true, String::new()));
+        }
+        let author = serde_json::json!({"authors": [k.public_key().to_hex()]});
+        assert_eq!(neg_sync(&mut ws, "big", author).await, Err("blocked: too many records".to_string()));
+        // At the cap is fine
+        let two = neg_sync(&mut ws, "ok", serde_json::json!({"authors": [k.public_key().to_hex()], "until": t + 1})).await;
+        assert_eq!(two.map(|ids| ids.len()), Ok(2));
+    }
+
+    #[tokio::test]
+    async fn db_short_or_invalid_id_matches_nothing() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let (mut ws, _) = connect(addr).await;
+        let e = ev(&k, 1, now(), "findable", vec![]);
+        assert_eq!(publish(&mut ws, &e).await, (true, String::new()));
+        let prefix = e.id.to_hex()[..8].to_string();
+        for (i, bad) in [prefix.as_str(), "not-hex", "' OR 1=1 --"].into_iter().enumerate() {
+            let got = req(&mut ws, &format!("bad{}", i), serde_json::json!({"ids": [bad]})).await;
+            assert!(got.is_empty(), "id {:?} should match nothing, got {} events", bad, got.len());
+        }
     }
 }

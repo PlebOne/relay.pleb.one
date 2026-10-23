@@ -14,6 +14,7 @@ pub const DEFAULT_CREATED_AT_UPPER_LIMIT_SECS: u64 = 900;
 pub const DEFAULT_MAX_SUBSCRIPTIONS: usize = 20;
 pub const DEFAULT_MAX_LIMIT: usize = 500;
 pub const DEFAULT_LIMIT: usize = 100;
+pub const DEFAULT_NEGENTROPY_MAX_RECORDS: usize = 500_000;
 /// Room for the `["EVENT", ...]` envelope around an event at the size cap.
 const MESSAGE_HEADROOM: usize = 1024;
 
@@ -30,6 +31,8 @@ pub struct RelayConfig {
     pub max_subscriptions: usize,
     /// Cap on a filter's `limit` (MAX_LIMIT).
     pub max_limit: usize,
+    /// Max events a NIP-77 NEG-OPEN filter may match (NEGENTROPY_MAX_RECORDS).
+    pub max_negentropy_records: usize,
     /// Relay operator pubkey, hex (RELAY_PUBKEY, hex or npub).
     pub pubkey: String,
     /// RELAY_CONTACT
@@ -72,6 +75,7 @@ impl RelayConfig {
             created_at_upper_limit: num("CREATED_AT_UPPER_LIMIT_SECS").unwrap_or(DEFAULT_CREATED_AT_UPPER_LIMIT_SECS),
             max_subscriptions: num("MAX_SUBSCRIPTIONS_PER_CONNECTION").map(|n| n as usize).unwrap_or(DEFAULT_MAX_SUBSCRIPTIONS),
             max_limit: num("MAX_LIMIT").map(|n| n as usize).unwrap_or(DEFAULT_MAX_LIMIT),
+            max_negentropy_records: num("NEGENTROPY_MAX_RECORDS").map(|n| n as usize).unwrap_or(DEFAULT_NEGENTROPY_MAX_RECORDS),
             pubkey,
             contact: get("RELAY_CONTACT").unwrap_or_else(|| DEFAULT_RELAY_CONTACT.to_string()),
             icon: get("RELAY_ICON").unwrap_or_else(|| DEFAULT_RELAY_ICON.to_string()),
@@ -153,6 +157,7 @@ mod tests {
         assert_eq!(c.created_at_upper_limit, 900);
         assert_eq!(c.max_subscriptions, 20);
         assert_eq!(c.max_limit, 500);
+        assert_eq!(c.max_negentropy_records, 500_000);
         assert_eq!(c.pubkey, OPERATOR_HEX);
         assert_eq!(c.contact, "https://relay.pleb.one");
         assert_eq!(c.icon, "https://relay.pleb.one/android-chrome-512x512.png");
@@ -166,6 +171,7 @@ mod tests {
             ("CREATED_AT_UPPER_LIMIT_SECS", "60"),
             ("MAX_SUBSCRIPTIONS_PER_CONNECTION", "5"),
             ("MAX_LIMIT", "50"),
+            ("NEGENTROPY_MAX_RECORDS", "1000"),
             ("RELAY_PUBKEY", other),
             ("RELAY_CONTACT", "mailto:x@example.com"),
             ("RELAY_ICON", "https://example.com/i.png"),
@@ -175,6 +181,7 @@ mod tests {
         assert_eq!(c.created_at_upper_limit, 60);
         assert_eq!(c.max_subscriptions, 5);
         assert_eq!(c.max_limit, 50);
+        assert_eq!(c.max_negentropy_records, 1000);
         assert_eq!(c.pubkey, other);
         assert_eq!(c.contact, "mailto:x@example.com");
         assert_eq!(c.icon, "https://example.com/i.png");
