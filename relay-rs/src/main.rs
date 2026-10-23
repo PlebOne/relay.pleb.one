@@ -221,7 +221,7 @@ async fn stats_handler(State(state): State<Arc<AppState>>) -> Json<serde_json::V
 async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
     let _connection = ConnectionGuard::new(state.connections.clone());
     let (mut sender, mut receiver) = socket.split();
-    let mut subscriptions: HashMap<String, Vec<Filter>> = HashMap::new();
+    let mut subscriptions: Subscriptions = HashMap::new();
     let mut broadcast_rx = state.tx.subscribe();
 
     // Spawn a task to handle broadcast messages (events from other clients)
@@ -360,7 +360,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
                 let mut sent_to = Vec::new();
                 for (sub_id, filters) in &subscriptions {
                     for filter in filters {
-                        if filter.match_event(&event, MatchEventOptions::new()) {
+                        if filter.matches(&event) {
                             debug!("Event {} matches subscription {}", event.id, sub_id);
                             let _ = tx_internal.send(Message::Text(RelayMessage::event(SubscriptionId::new(sub_id), event.clone()).as_json().into())).await;
                             sent_to.push(sub_id.clone());
@@ -382,7 +382,7 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<AppState>) {
 async fn handle_client_message(
     msg: ClientMessage<'_>,
     state: &Arc<AppState>,
-    subscriptions: &mut HashMap<String, Vec<Filter>>, 
+    subscriptions: &mut Subscriptions, 
     sender: &tokio::sync::mpsc::Sender<Message>,
     challenge: &str,
     auth_pubkey: &mut Option<String>,
@@ -435,6 +435,26 @@ async fn handle_client_message(
         }
     }
 }
+
+/// A live subscription filter. REQs that parse as nostr filters keep the parsed
+/// `Filter`; prefix-search REQs (short ids/authors that don't parse) keep the raw
+/// JSON and are matched with `raw_filter_matches`, the same rules as the SQL.
+#[derive(Clone)]
+enum SubFilter {
+    Parsed(Filter),
+    Raw(serde_json::Map<String, serde_json::Value>),
+}
+
+impl SubFilter {
+    fn matches(&self, event: &Event) -> bool {
+        match self {
+            SubFilter::Parsed(filter) => filter.match_event(event, MatchEventOptions::new()),
+            SubFilter::Raw(filter) => raw_filter_matches(filter, event),
+        }
+    }
+}
+
+type Subscriptions = HashMap<String, Vec<SubFilter>>;
 
 // NIP-86: Relay Management API
 async fn handle_nip86(
@@ -870,7 +890,7 @@ async fn handle_req(
     sub_id: SubscriptionId,
     filters: Vec<Filter>,
     state: &Arc<AppState>,
-    subscriptions: &mut HashMap<String, Vec<Filter>>,
+    subscriptions: &mut Subscriptions,
     sender: &tokio::sync::mpsc::Sender<Message>,
 ) {
     info!("Received REQ sub_id: {}, filters: {:?}", sub_id, filters);
@@ -878,7 +898,7 @@ async fn handle_req(
         let _ = sender.send(Message::Text(RelayMessage::closed(sub_id, "error: too many subscriptions").as_json().into())).await;
         return;
     }
-    subscriptions.insert(sub_id.to_string(), filters.clone());
+    subscriptions.insert(sub_id.to_string(), filters.iter().cloned().map(SubFilter::Parsed).collect());
 
     // Push every filter (ids, authors, kinds, since/until, #tags, limit) into SQL
     let filter_maps: Vec<serde_json::Map<String, serde_json::Value>> = filters
@@ -960,6 +980,67 @@ fn json_strings(val: Option<&serde_json::Value>) -> Option<Vec<String>> {
     Some(arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
 }
 
+/// Lowercase hex, 1-64 chars: a full pubkey or a prefix of one.
+fn is_valid_author(a: &str) -> bool {
+    !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Single-letter tag filter key (`#e`, `#p`, ...) to its letter.
+fn tag_filter_letter(key: &str) -> Option<char> {
+    let mut chars = key.chars();
+    match (chars.next(), chars.next(), chars.next()) {
+        (Some('#'), Some(c), None) if c.is_ascii_alphabetic() => Some(c),
+        _ => None,
+    }
+}
+
+/// In-memory version of one filter's WHERE clause in `build_filtered_query`,
+/// for matching live events against raw (prefix-search) subscriptions.
+fn raw_filter_matches(filter: &serde_json::Map<String, serde_json::Value>, event: &Event) -> bool {
+    if let Some(ids) = json_strings(filter.get("ids")) {
+        let id = event.id.to_hex();
+        if !ids.iter().any(|i| *i == id) {
+            return false;
+        }
+    }
+    if let Some(authors) = json_strings(filter.get("authors")) {
+        let pubkey = event.pubkey.to_hex();
+        let matched = authors
+            .iter()
+            .filter(|a| is_valid_author(a))
+            .any(|a| if a.len() == 64 { *a == pubkey } else { pubkey.starts_with(a.as_str()) });
+        if !matched {
+            return false;
+        }
+    }
+    if let Some(kinds) = filter.get("kinds").and_then(|v| v.as_array()) {
+        if !kinds.is_empty() && !kinds.iter().filter_map(|k| k.as_i64()).any(|k| k == event.kind.as_u16() as i64) {
+            return false;
+        }
+    }
+    let created_at = event.created_at.as_secs() as f64;
+    if filter.get("since").and_then(|v| v.as_f64()).is_some_and(|since| created_at < since) {
+        return false;
+    }
+    if filter.get("until").and_then(|v| v.as_f64()).is_some_and(|until| created_at > until) {
+        return false;
+    }
+    for (key, val) in filter.iter() {
+        let Some(letter) = tag_filter_letter(key) else { continue };
+        if let Some(values) = json_strings(Some(val)) {
+            let letter = letter.to_string();
+            let matched = event.tags.iter().any(|tag| {
+                let t = tag.as_slice();
+                t.len() >= 2 && t[0] == letter && values.iter().any(|v| *v == t[1])
+            });
+            if !matched {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Build one query for all filters of a REQ. Each filter becomes its own subquery
 /// (with its own ORDER BY/LIMIT) and the subqueries are UNIONed, so the result is
 /// filter1 OR filter2 OR ... All values are bound parameters.
@@ -1000,7 +1081,7 @@ fn build_filtered_query(
         if let Some(authors) = json_strings(filter.get("authors")) {
             let (exact, prefixes): (Vec<String>, Vec<String>) = authors
                 .into_iter()
-                .filter(|a| !a.is_empty() && a.len() <= 64 && a.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)))
+                .filter(|a| is_valid_author(a))
                 .partition(|a| a.len() == 64);
             let patterns: Vec<String> = prefixes.into_iter().map(|a| format!("{}%", a)).collect();
             qb.push(" AND (pubkey = ANY(").push_bind(exact).push(") OR pubkey LIKE ANY(").push_bind(patterns).push("))");
@@ -1023,11 +1104,7 @@ fn build_filtered_query(
 
         // Single-letter tag filters (#e, #p, #a, #d, ...)
         for (key, val) in filter.iter() {
-            let mut chars = key.chars();
-            let letter = match (chars.next(), chars.next(), chars.next()) {
-                (Some('#'), Some(c), None) if c.is_ascii_alphabetic() => c,
-                _ => continue,
-            };
+            let Some(letter) = tag_filter_letter(key) else { continue };
             if let Some(values) = json_strings(Some(val)) {
                 qb.push(" AND EXISTS (SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(tags) = 'array' THEN tags ELSE '[]'::jsonb END) AS t WHERE t->>0 = ")
                     .push_bind(letter.to_string())
@@ -1051,11 +1128,16 @@ async fn handle_prefix_search_req(
     sub_id: SubscriptionId,
     filters: Vec<serde_json::Map<String, serde_json::Value>>,
     state: &Arc<AppState>,
-    subscriptions: &mut HashMap<String, Vec<Filter>>,
+    subscriptions: &mut Subscriptions,
     sender: &tokio::sync::mpsc::Sender<Message>,
 ) {
     info!("Received REQ with potential prefix search, sub_id: {}", sub_id);
-    
+    if !subscriptions.contains_key(&sub_id.to_string()) && subscriptions.len() >= state.config.max_subscriptions {
+        let _ = sender.send(Message::Text(RelayMessage::closed(sub_id, "error: too many subscriptions").as_json().into())).await;
+        return;
+    }
+    subscriptions.insert(sub_id.to_string(), filters.iter().cloned().map(SubFilter::Raw).collect());
+
     let mut query = build_events_query(&filters, &state.config);
 
     debug!("Prefix search query: {}", query.sql());
@@ -1312,6 +1394,33 @@ mod e2e_tests {
         send(&mut ws, serde_json::json!(["AUTH", good])).await;
         let m = recv(&mut ws).await.unwrap();
         assert_eq!((m[2].as_bool(), m[3].as_str()), (Some(true), Some("auth-success")));
+    }
+
+    #[test]
+    fn raw_filter_matches_rules() {
+        let k = Keys::generate();
+        let pk = k.public_key().to_hex();
+        let p_tag = Keys::generate().public_key().to_hex();
+        let e = ev(&k, 1, 1_700_000_000, "x", vec![Tag::parse(vec!["p".to_string(), p_tag.clone()]).unwrap()]);
+        let id = e.id.to_hex();
+        let m = |f: serde_json::Value| raw_filter_matches(f.as_object().unwrap(), &e);
+
+        assert!(m(serde_json::json!({})));
+        assert!(m(serde_json::json!({"authors": [&pk[..10]]})));
+        assert!(m(serde_json::json!({"authors": [pk.clone()]})));
+        assert!(!m(serde_json::json!({"authors": [pk[..10].to_uppercase()]})), "uppercase is not valid hex here");
+        assert!(!m(serde_json::json!({"authors": ["zz"]})), "no valid authors matches nothing");
+        assert!(m(serde_json::json!({"ids": [id.clone()]})));
+        assert!(!m(serde_json::json!({"ids": [&id[..8]]})), "ids are exact");
+        assert!(m(serde_json::json!({"kinds": [0, 1]})));
+        assert!(!m(serde_json::json!({"kinds": [7]})));
+        assert!(m(serde_json::json!({"since": 1_700_000_000, "until": 1_700_000_000})));
+        assert!(!m(serde_json::json!({"since": 1_700_000_001})));
+        assert!(!m(serde_json::json!({"until": 1_699_999_999})));
+        assert!(m(serde_json::json!({"#p": [p_tag.clone()]})));
+        assert!(!m(serde_json::json!({"#p": [&p_tag[..10]]})), "tag values are exact");
+        assert!(!m(serde_json::json!({"#e": [p_tag.clone()]})));
+        assert!(m(serde_json::json!({"authors": [&pk[..4]], "kinds": [1], "limit": 1})), "limit is ignored for live events");
     }
 
     // ---------- DB ----------
@@ -1579,5 +1688,94 @@ mod e2e_tests {
             let got = req(&mut ws, &format!("bad{}", i), serde_json::json!({"ids": [bad]})).await;
             assert!(got.is_empty(), "id {:?} should match nothing, got {} events", bad, got.len());
         }
+    }
+
+    #[tokio::test]
+    async fn db_raw_filter_matcher_agrees_with_sql() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let (a, b) = (whitelisted(&db).await, whitelisted(&db).await);
+        let (mut ws, _) = connect(addr).await;
+        let t = now() - 5000;
+        let p_tag = Keys::generate().public_key().to_hex();
+        let mut seeded = Vec::new();
+        for (i, (k, kind)) in [(&a, 1u16), (&a, 7), (&b, 1), (&b, 7), (&a, 1), (&b, 1)].into_iter().enumerate() {
+            let tags = if i % 2 == 0 { vec![Tag::parse(vec!["p".to_string(), p_tag.clone()]).unwrap()] } else { vec![] };
+            let e = ev(k, kind, t + i as u64, &format!("m {}", i), tags);
+            assert_eq!(publish(&mut ws, &e).await, (true, String::new()));
+            seeded.push(e);
+        }
+        let (ah, bh) = (a.public_key().to_hex(), b.public_key().to_hex());
+        let filters = [
+            serde_json::json!({"authors": [&ah[..8]]}),
+            serde_json::json!({"authors": [&ah[..8], &bh[..12]], "kinds": [7]}),
+            serde_json::json!({"authors": [ah.clone()], "#p": [p_tag.clone()]}),
+            serde_json::json!({"#p": [p_tag.clone()], "since": t + 2, "until": t + 4}),
+            serde_json::json!({"ids": [seeded[3].id.to_hex(), &seeded[4].id.to_hex()[..10]]}),
+            serde_json::json!({"authors": ["ZZ"]}),
+        ];
+        let cfg = RelayConfig::default();
+        for f in filters {
+            let map = f.as_object().unwrap().clone();
+            let rows = build_events_query(&[map.clone()], &cfg).build().fetch_all(&db).await.unwrap();
+            let from_sql: std::collections::BTreeSet<String> = rows.iter().map(|r| r.get::<String, _>("eventId")).collect();
+            for e in &seeded {
+                assert_eq!(raw_filter_matches(&map, e), from_sql.contains(&e.id.to_hex()), "filter {} event {}", f, e.content);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn db_prefix_search_subscription_gets_live_events_until_closed() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let (alice, bob) = (whitelisted(&db).await, whitelisted(&db).await);
+        let (mut sub, _) = connect(addr).await;
+        let (mut pubr, _) = connect(addr).await;
+        let prefix = alice.public_key().to_hex()[..10].to_string();
+
+        // Short author prefix: doesn't parse as a nostr Filter, goes through the prefix path
+        assert!(req(&mut sub, "pfx", serde_json::json!({"authors": [prefix], "kinds": [1]})).await.is_empty());
+
+        let a1 = ev(&alice, 1, now(), "alice live 1", vec![]);
+        let b1 = ev(&bob, 1, now(), "bob live", vec![]);
+        let a7 = ev(&alice, 7, now(), "+", vec![]);
+        let a2 = ev(&alice, 1, now(), "alice live 2", vec![]);
+        for e in [&a1, &b1, &a7, &a2] {
+            assert_eq!(publish(&mut pubr, e).await, (true, String::new()));
+        }
+        // Broadcasts arrive in publish order, so bob's note and alice's kind 7 were skipped.
+        for want in [&a1, &a2] {
+            let m = recv_until(&mut sub, |m| m[0] == "EVENT").await;
+            assert_eq!((m[1].as_str(), m[2]["id"].as_str()), (Some("pfx"), Some(want.id.to_hex().as_str())));
+        }
+
+        send(&mut sub, serde_json::json!(["CLOSE", "pfx"])).await;
+        let m = recv_until(&mut sub, |m| m[1] == "pfx").await;
+        assert_eq!(m[0], "CLOSED");
+        let a3 = ev(&alice, 1, now(), "alice after close", vec![]);
+        assert_eq!(publish(&mut pubr, &a3).await, (true, String::new()));
+        // A probe REQ for a3 on the same socket: nothing may arrive for "pfx" before its EOSE.
+        send(&mut sub, serde_json::json!(["REQ", "probe", {"ids": [a3.id.to_hex()]}])).await;
+        loop {
+            let m = recv(&mut sub).await.expect("probe EOSE");
+            assert_ne!(m[1], "pfx", "closed prefix sub still received {}", m);
+            if m[0] == "EOSE" && m[1] == "probe" {
+                break;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn db_prefix_search_counts_toward_max_subscriptions() {
+        let cfg = test_config(&[("MAX_SUBSCRIPTIONS_PER_CONNECTION", "1")]);
+        let Some((addr, _db)) = start(cfg, true).await else { return };
+        let (mut ws, _) = connect(addr).await;
+        req(&mut ws, "s1", serde_json::json!({"kinds": [1], "limit": 1})).await;
+        send(&mut ws, serde_json::json!(["REQ", "s2", {"authors": ["abcd"]}])).await;
+        let m = recv_until(&mut ws, |m| m[1] == "s2").await;
+        assert_eq!((m[0].as_str(), m[2].as_str()), (Some("CLOSED"), Some("error: too many subscriptions")));
+        // Re-using the open id is still fine
+        send(&mut ws, serde_json::json!(["CLOSE", "s1"])).await;
+        recv_until(&mut ws, |m| m[0] == "CLOSED" && m[1] == "s1").await;
+        req(&mut ws, "s2", serde_json::json!({"authors": ["abcd"]})).await;
     }
 }
