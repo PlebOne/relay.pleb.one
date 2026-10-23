@@ -3,9 +3,11 @@
 
 {$RELAY_DOMAIN:relay.pleb.one} {
     # WebSocket for Nostr relay - Must be first to catch all WS connections
+    # Header values are case-insensitive (RFC 9110/6455): clients send
+    # "Upgrade", "upgrade" or "keep-alive, Upgrade", and "websocket" or "WebSocket".
     @websocket {
-        header Connection *Upgrade*
-        header Upgrade websocket
+        header_regexp Connection (?i)\bupgrade\b
+        header_regexp Upgrade (?i)^websocket$
     }
     handle @websocket {
         reverse_proxy relay:3001 {
