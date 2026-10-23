@@ -884,9 +884,6 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
                     }
                 }
             }
-            // OK only after the deletions, so a client that sees OK won't still get the deleted events.
-            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
-
             // Handle NIP-62: Request to Vanish
             if event.kind.as_u16() == 62 {
                 let pubkey = event.pubkey.to_string();
@@ -906,6 +903,8 @@ async fn handle_event(event: Event, state: &Arc<AppState>, sender: &tokio::sync:
                 // Invalidate whitelist cache for vanished user
                 invalidate_whitelist_cache(state, &pubkey).await;
             }
+            // OK only after NIP-09/NIP-62 deletions, so a client that sees OK won't still get the deleted events.
+            let _ = sender.send(Message::Text(RelayMessage::ok(event.id, true, "".to_string()).as_json().into())).await;
 
             // Cache the event in Redis
             cache_event(state, &event).await;
@@ -1627,6 +1626,39 @@ mod e2e_tests {
         assert_eq!(count_rows(&db, &k, 1).await, 0);
         let author = k.public_key().to_hex();
         assert!(req(&mut ws, "after", serde_json::json!({"authors": [author], "kinds": [1]})).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn db_nip62_vanish_is_done_before_ok() {
+        let Some((addr, db)) = start(RelayConfig::default(), true).await else { return };
+        let k = whitelisted(&db).await;
+        let pubkey = k.public_key().to_hex();
+        let (mut ws, _) = connect(addr).await;
+        for i in 0..3 {
+            assert_eq!(publish(&mut ws, &ev(&k, 1, now() - 10 + i, &format!("vanish me {}", i), vec![])).await, (true, String::new()));
+        }
+
+        // Hold the user row so the relay's VANISHED update blocks (reads and the
+        // event insert are not blocked by this lock mode).
+        let mut lock = db.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM users WHERE pubkey = $1 FOR NO KEY UPDATE").bind(&pubkey).execute(&mut *lock).await.unwrap();
+        let vanish = ev(&k, 62, now(), "", vec![Tag::parse(vec!["relay", "ALL_RELAYS"]).unwrap()]);
+        send(&mut ws, serde_json::json!(["EVENT", vanish])).await;
+        let early = tokio::time::timeout(Duration::from_millis(500), ws.next()).await;
+        assert!(early.is_err(), "OK arrived before the vanish finished: {:?}", early);
+        lock.commit().await.unwrap();
+
+        let ok = recv_until(&mut ws, |m| m[0] == "OK").await;
+        assert_eq!(ok, serde_json::json!(["OK", vanish.id.to_hex(), true, ""]));
+        assert_eq!(count_rows(&db, &k, 1).await, 0);
+        let status: String = sqlx::query("SELECT \"whitelistStatus\"::text AS s FROM users WHERE pubkey = $1")
+            .bind(&pubkey)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+            .get("s");
+        assert_eq!(status, "VANISHED");
+        assert_eq!(publish(&mut ws, &ev(&k, 1, now(), "back?", vec![])).await, (false, "blocked: user not whitelisted".to_string()));
     }
 
     #[tokio::test]
