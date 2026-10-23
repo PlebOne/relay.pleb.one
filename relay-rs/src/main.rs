@@ -1479,7 +1479,11 @@ mod e2e_tests {
 
     #[test]
     fn raw_filter_matches_rules() {
-        let k = Keys::generate();
+        // The uppercase-prefix check below needs a letter in the first 10 hex chars
+        // (an all-digit prefix is unchanged by to_uppercase); ~1% of keys lack one.
+        let k = std::iter::repeat_with(Keys::generate)
+            .find(|k| k.public_key().to_hex()[..10].bytes().any(|b| b.is_ascii_alphabetic()))
+            .unwrap();
         let pk = k.public_key().to_hex();
         let p_tag = Keys::generate().public_key().to_hex();
         let e = ev(&k, 1, 1_700_000_000, "x", vec![Tag::parse(vec!["p".to_string(), p_tag.clone()]).unwrap()]);
